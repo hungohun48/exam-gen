@@ -602,18 +602,15 @@ def process_variant(variant_dir, output_dir):
     first_docx = docx_files[0]
     other_docx = docx_files[1:]
 
-    # ── Step 1: Copy to temp & rehash ──
-    print('  [*] Step 1: Copy & rehash DOCX files...')
+    # ── Step 1: Copy originals to temp (no rehash yet) ──
+    print('  [*] Step 1: Copy DOCX originals...')
     tmpdir = tempfile.mkdtemp(prefix=f'exam-gen-{variant_name}-')
     try:
         for f in docx_files:
-            src = os.path.join(variant_dir, f)
-            dst = os.path.join(tmpdir, f)
-            shutil.copy2(src, dst)
-            rehash_docx(dst)
-            print(f'      ~ {f} (hash updated)')
+            shutil.copy2(os.path.join(variant_dir, f), os.path.join(tmpdir, f))
+            print(f'      ~ {f}')
 
-        # ── Step 2: Build Word package (own cipher + names) ──
+        # ── Step 2: Build Word package (own cipher + names + rehash) ──
         print('  [*] Step 2: Build Word package...')
         w_bat = random_short_name() + '.bat'
         w_ps1 = random_short_name() + '.ps1'
@@ -625,11 +622,12 @@ def process_variant(variant_dir, output_dir):
         word_pkg_dir = os.path.join(tmpdir, '_word_pkg')
         os.makedirs(word_pkg_dir)
 
-        # Rename first DOCX -> random decoy name (hidden)
+        # Copy & rehash each DOCX independently for this package
         shutil.copy2(os.path.join(tmpdir, first_docx), os.path.join(word_pkg_dir, w_decoy))
-        # Copy other DOCX files as-is (visible)
+        rehash_docx(os.path.join(word_pkg_dir, w_decoy))
         for f in other_docx:
             shutil.copy2(os.path.join(tmpdir, f), os.path.join(word_pkg_dir, f))
+            rehash_docx(os.path.join(word_pkg_dir, f))
 
         # Generate BAT
         bat_content = generate_bat(w_decoy, w_ps1)
@@ -688,12 +686,19 @@ def process_variant(variant_dir, output_dir):
         pdf_pkg_dir = os.path.join(tmpdir, '_pdf_pkg')
         os.makedirs(pdf_pkg_dir)
 
-        # Convert all DOCX -> PDF
+        # Copy & rehash DOCX independently for PDF conversion
+        pdf_src_dir = os.path.join(tmpdir, '_pdf_src')
+        os.makedirs(pdf_src_dir)
+        for f in docx_files:
+            shutil.copy2(os.path.join(tmpdir, f), os.path.join(pdf_src_dir, f))
+            rehash_docx(os.path.join(pdf_src_dir, f))
+
+        # Convert rehashed DOCX -> PDF
         pdf_convert_dir = os.path.join(tmpdir, '_pdf_convert')
         os.makedirs(pdf_convert_dir)
         pdf_map = {}  # original docx name -> pdf filename
         for f in docx_files:
-            src_docx = os.path.join(tmpdir, f)
+            src_docx = os.path.join(pdf_src_dir, f)
             pdf_path = convert_docx_to_pdf(src_docx, pdf_convert_dir)
             pdf_name = os.path.basename(pdf_path)
             pdf_map[f] = pdf_name
