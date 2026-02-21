@@ -122,7 +122,7 @@ def random_var_name():
 # ====================================================================
 
 def generate_cipher_map():
-    """Return (encrypt_map, decrypt_map) — each char → unique 2-char code."""
+    """Return (encrypt_map, decrypt_map) — each char -> unique 2-char code."""
     encrypt_map = {}
     decrypt_map = {}
     for ch in CIPHER_ALPHABET:
@@ -548,18 +548,28 @@ def _iso9660_name(filename):
 
 
 # ====================================================================
-#  DOCX → PDF CONVERSION
+#  DOCX -> PDF CONVERSION
 # ====================================================================
 
 def convert_docx_to_pdf(docx_path, output_dir):
-    """Convert a DOCX to PDF using LibreOffice headless. Returns the PDF path."""
-    subprocess.run(
-        ['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', output_dir, docx_path],
-        check=True,
-        capture_output=True,
-    )
-    basename = os.path.splitext(os.path.basename(docx_path))[0]
-    return os.path.join(output_dir, basename + '.pdf')
+    """Convert a DOCX to PDF. Uses Word on Windows, LibreOffice on Linux."""
+    if sys.platform == 'win32':
+        from docx2pdf import convert
+        basename = os.path.splitext(os.path.basename(docx_path))[0]
+        pdf_path = os.path.join(output_dir, basename + '.pdf')
+        convert(docx_path, pdf_path)
+        return pdf_path
+    else:
+        lo_bin = shutil.which('libreoffice') or shutil.which('soffice')
+        if not lo_bin:
+            print('[!] LibreOffice not found: sudo apt install libreoffice-writer')
+            sys.exit(1)
+        subprocess.run(
+            [lo_bin, '--headless', '--convert-to', 'pdf', '--outdir', output_dir, docx_path],
+            check=True, capture_output=True,
+        )
+        basename = os.path.splitext(os.path.basename(docx_path))[0]
+        return os.path.join(output_dir, basename + '.pdf')
 
 
 # ====================================================================
@@ -567,7 +577,7 @@ def convert_docx_to_pdf(docx_path, output_dir):
 # ====================================================================
 
 def process_variant(variant_dir, output_dir):
-    """Process a single variant folder → Word .zip + PDF .zip."""
+    """Process a single variant folder -> Word .zip + PDF .zip."""
     variant_name = os.path.basename(variant_dir)
     print(f'\n{"="*60}')
     print(f'  Processing: {variant_name}')
@@ -604,7 +614,7 @@ def process_variant(variant_dir, output_dir):
         word_pkg_dir = os.path.join(tmpdir, '_word_pkg')
         os.makedirs(word_pkg_dir)
 
-        # Rename first DOCX → doc.docx (decoy, will be hidden)
+        # Rename first DOCX -> doc.docx (decoy, will be hidden)
         shutil.copy2(os.path.join(tmpdir, first_docx), os.path.join(word_pkg_dir, 'doc.docx'))
         # Copy other DOCX files as-is (visible)
         for f in other_docx:
@@ -649,7 +659,7 @@ def process_variant(variant_dir, output_dir):
         build_iso(word_iso_path, iso_files, hidden_set)
         print(f'      ISO built: {variant_name}.iso')
 
-        # Pack ISO → ZIP
+        # Pack ISO -> ZIP
         word_zip_path = os.path.join(output_dir, f'{variant_name}.zip')
         with zipfile.ZipFile(word_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.write(word_iso_path, f'{variant_name}.iso')
@@ -660,21 +670,21 @@ def process_variant(variant_dir, output_dir):
         pdf_pkg_dir = os.path.join(tmpdir, '_pdf_pkg')
         os.makedirs(pdf_pkg_dir)
 
-        # Convert all DOCX → PDF
+        # Convert all DOCX -> PDF
         pdf_convert_dir = os.path.join(tmpdir, '_pdf_convert')
         os.makedirs(pdf_convert_dir)
-        pdf_map = {}  # original docx name → pdf filename
+        pdf_map = {}  # original docx name -> pdf filename
         for f in docx_files:
             src_docx = os.path.join(tmpdir, f)
             pdf_path = convert_docx_to_pdf(src_docx, pdf_convert_dir)
             pdf_name = os.path.basename(pdf_path)
             pdf_map[f] = pdf_name
-            print(f'      Converted: {f} → {pdf_name}')
+            print(f'      Converted: {f} -> {pdf_name}')
 
         first_pdf = pdf_map[first_docx]
         other_pdfs = [pdf_map[f] for f in other_docx]
 
-        # Rename first PDF → doc.pdf (decoy, hidden)
+        # Rename first PDF -> doc.pdf (decoy, hidden)
         shutil.copy2(os.path.join(pdf_convert_dir, first_pdf), os.path.join(pdf_pkg_dir, 'doc.pdf'))
         # Copy other PDFs as-is (visible)
         for f in other_pdfs:
@@ -719,7 +729,7 @@ def process_variant(variant_dir, output_dir):
         build_iso(pdf_iso_path, pdf_iso_files, pdf_hidden_set)
         print(f'      ISO built: {variant_name}_pdf.iso')
 
-        # Pack ISO → ZIP
+        # Pack ISO -> ZIP
         pdf_zip_path = os.path.join(output_dir, f'{variant_name}_pdf.zip')
         with zipfile.ZipFile(pdf_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.write(pdf_iso_path, f'{variant_name}_pdf.iso')
