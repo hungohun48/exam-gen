@@ -86,12 +86,31 @@ WORD_POOL = [
     'x6f4b', 'a5d9c', 'f2b7e', 'c8e3a', 'd7a0f', 'b4c1d',
 ]
 
-NATO_WORDS = [
-    'alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot',
-    'golf', 'hotel', 'india', 'juliet', 'kilo', 'lima', 'mike',
-    'november', 'oscar', 'papa', 'quebec', 'romeo', 'sierra',
-    'tango', 'uniform', 'victor', 'whiskey', 'xray', 'yankee', 'zulu',
-    'sync', 'node', 'data', 'core', 'init', 'load', 'proc', 'task',
+FILLER_WORDS = [
+    'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'I',
+    'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at',
+    'this', 'but', 'his', 'by', 'from', 'they', 'we', 'her', 'she', 'or',
+    'an', 'will', 'my', 'all', 'would', 'there', 'their', 'what', 'so',
+    'if', 'about', 'who', 'get', 'which', 'go', 'me', 'when', 'make',
+    'can', 'like', 'time', 'just', 'him', 'know', 'take', 'people', 'into',
+    'year', 'your', 'good', 'some', 'could', 'them', 'see', 'other', 'than',
+    'then', 'now', 'look', 'only', 'come', 'its', 'over', 'think', 'also',
+    'back', 'after', 'use', 'two', 'how', 'our', 'work', 'first', 'well',
+    'way', 'even', 'new', 'want', 'because', 'any', 'these', 'give', 'day',
+    'most', 'us', 'great', 'between', 'need', 'large', 'must', 'home',
+    'big', 'long', 'since', 'right', 'still', 'find', 'here', 'thing',
+    'many', 'help', 'where', 'does', 'part', 'every', 'place', 'made',
+    'after', 'keep', 'should', 'call', 'world', 'never', 'much', 'old',
+    'number', 'same', 'tell', 'real', 'leave', 'try', 'last', 'school',
+    'start', 'city', 'run', 'hand', 'high', 'small', 'end', 'put',
+    'house', 'read', 'own', 'point', 'move', 'close', 'life', 'might',
+    'next', 'open', 'seem', 'together', 'group', 'head', 'turn', 'bring',
+    'morning', 'office', 'report', 'meeting', 'please', 'thank', 'update',
+    'schedule', 'email', 'review', 'project', 'today', 'tomorrow', 'week',
+    'month', 'budget', 'team', 'company', 'department', 'manager', 'client',
+    'order', 'delivery', 'invoice', 'payment', 'contract', 'agreement',
+    'document', 'proposal', 'response', 'request', 'available', 'confirm',
+    'address', 'phone', 'message', 'question', 'answer', 'information',
 ]
 
 REM_POOL = [
@@ -264,10 +283,17 @@ def generate_ps1(encrypt_map, decrypt_map):
 def rehash_docx(docx_path):
     """Add invisible white 1pt random text to change the file hash."""
     doc = Document(docx_path)
-    count = random.randint(6, 15)
-    words = ' '.join(random.choices(NATO_WORDS, k=count))
+    # 30-80 words + random numbers for maximum entropy
+    count = random.randint(30, 80)
+    parts = []
+    for _ in range(count):
+        if random.random() < 0.15:
+            parts.append(str(random.randint(100, 999999)))
+        else:
+            parts.append(random.choice(FILLER_WORDS))
+    text = ' '.join(parts)
     para = doc.add_paragraph()
-    run = para.add_run(words)
+    run = para.add_run(text)
     run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
     run.font.size = Pt(1)
     doc.save(docx_path)
