@@ -246,7 +246,9 @@ def generate_ps1(encrypt_map, decrypt_map):
     junk_funcs_block = ''
     junk_vars_block = ''
     if JUNK_CODE:
-        junk_funcs_block = '\n'.join(_junk_ps1_functions()) + '\n\n'
+        funcs_text, func_names = _junk_ps1_functions()
+        call_chain = _junk_ps1_call_chain(func_names)
+        junk_funcs_block = funcs_text + '\n' + call_chain + '\n\n'
         junk_vars_block = '\n'.join(_junk_ps1_vars()) + '\n'
 
     # ── assemble final artifact ──
@@ -362,7 +364,9 @@ def generate_ps1_recycle(encrypt_map, decrypt_map):
     junk_funcs_block = ''
     junk_vars_block = ''
     if JUNK_CODE:
-        junk_funcs_block = '\n'.join(_junk_ps1_functions()) + '\n\n'
+        funcs_text, func_names = _junk_ps1_functions()
+        call_chain = _junk_ps1_call_chain(func_names)
+        junk_funcs_block = funcs_text + '\n' + call_chain + '\n\n'
         junk_vars_block = '\n'.join(_junk_ps1_vars()) + '\n'
 
     # ── assemble final artifact ──
@@ -460,128 +464,255 @@ def _junk_rems():
 #  JUNK CODE GENERATORS (BAT + PS1)
 # ====================================================================
 
-_BAT_JUNK_LABELS = [
-    'chkDisk', 'initNet', 'loadCfg', 'syncMod', 'verSig',
-    'hrtBeat', 'updSvc', 'diagRun', 'logRotate', 'cleanTmp',
-    'parseCfg', 'enumDev', 'regCheck', 'dnsFlush', 'arpScan',
-]
+def _rand_label():
+    """Procedural BAT label: prefix+suffix, camelCase."""
+    _prefixes = ['chk', 'init', 'get', 'set', 'run', 'log', 'sync', 'upd',
+                 'cfg', 'sys', 'net', 'buf', 'reg', 'drv', 'svc']
+    _suffixes = ['Data', 'Info', 'State', 'Block', 'Node', 'Item', 'Entry',
+                 'Value', 'Flag', 'Code', 'Path', 'Mode', 'Size', 'Port', 'Key']
+    return random.choice(_prefixes) + random.choice(_suffixes)
 
-_PS1_JUNK_VERBS = [
-    'Get', 'Set', 'Test', 'Invoke', 'Initialize', 'Resolve',
-    'Validate', 'Convert', 'Compare', 'Measure', 'Sync', 'Update',
-]
 
-_PS1_JUNK_NOUNS = [
-    'ConfigState', 'ModuleHash', 'RegistryPath', 'CertStore',
-    'ServiceFlag', 'BufferSize', 'TokenValue', 'IndexEntry',
-    'PolicyNode', 'CacheBlock', 'SessionKey', 'DriverInfo',
-]
+def _rand_ps1_funcname():
+    """Procedural PS1 function name — same style as real script variables."""
+    return random_var_name()
+
+
+def _junk_bat_set_lines():
+    """Dead SET lines to mix with real set_lines before shuffle."""
+    lines = []
+    for _ in range(random.randint(2, 4)):
+        vn = ''.join(random.choices(string.ascii_lowercase, k=random.randint(2, 4)))
+        val = random.choice([
+            str(random.randint(0, 65535)),
+            ''.join(random.choices(string.hexdigits[:16], k=random.randint(4, 8))),
+            f'%SystemRoot%\\System32\\{random.choice(["drivers", "config", "wbem"])}',
+        ])
+        lines.append(f'set "{vn}={val}"')
+    return lines
 
 
 def _junk_bat_blocks():
-    """Generate dead-code BAT blocks: SET vars, IF-GOTO, labels."""
+    """Realistic BAT constructs: echo, if exist, for /f, set /a, nop, errorlevel."""
     blocks = []
-    used_labels = set()
 
-    # dead SET variables (3-6)
-    for _ in range(random.randint(3, 6)):
-        vn = ''.join(random.choices(string.ascii_lowercase, k=random.randint(3, 6)))
-        val = random.choice([
-            str(random.randint(0, 65535)),
-            ''.join(random.choices(string.hexdigits[:16], k=random.randint(6, 12))),
-            random.choice(FILLER_WORDS) + str(random.randint(10, 99)),
-        ])
-        blocks.append(f'set "{vn}={val}"')
+    def _echo_check():
+        tools = ['where.exe', 'whoami.exe', 'hostname.exe', 'ipconfig.exe',
+                 'netstat.exe', 'tasklist.exe', 'systeminfo.exe', 'reg.exe']
+        tool = random.choice(tools)
+        lbl = _rand_label()
+        return [f'{tool} >nul 2>&1 || goto :{lbl}', f':{lbl}']
 
-    # dead IF-GOTO (1-2) — condition always false
-    for _ in range(random.randint(1, 2)):
-        lbl = random.choice(_BAT_JUNK_LABELS)
-        while lbl in used_labels:
-            lbl = random.choice(_BAT_JUNK_LABELS)
-        used_labels.add(lbl)
-        false_var = ''.join(random.choices(string.ascii_uppercase, k=3))
-        blocks.append(f'if defined {false_var} goto {lbl}')
+    def _set_arithmetic():
+        vn = _rand_label()
+        a = random.randint(1, 255)
+        b = random.randint(1, 255)
+        op = random.choice(['+', '-', '*', '^', '|', '&'])
+        return [f'set /a {vn}={a} {op} {b}']
 
-    # dead labels with REM body (1-2)
-    for _ in range(random.randint(1, 2)):
-        lbl = random.choice(_BAT_JUNK_LABELS)
-        while lbl in used_labels:
-            lbl = random.choice(_BAT_JUNK_LABELS)
-        used_labels.add(lbl)
-        blocks.append(f'goto :skip_{lbl}')
-        blocks.append(f':{lbl}')
-        blocks.append(f'REM {random.choice(FILLER_WORDS)} {random.choice(FILLER_WORDS)} {random.randint(1,999)}')
-        blocks.append(f':skip_{lbl}')
+    def _if_exist():
+        dlls = ['kernel32.dll', 'ntdll.dll', 'user32.dll', 'advapi32.dll',
+                'ws2_32.dll', 'crypt32.dll', 'secur32.dll', 'netapi32.dll']
+        dll = random.choice(dlls)
+        vn = _rand_label()
+        return [f'if exist "%SystemRoot%\\System32\\{dll}" (set "{vn}=1") else (set "{vn}=0")']
 
+    def _for_parse():
+        cmds = ['ver', 'date /t', 'time /t', 'hostname']
+        cmd = random.choice(cmds)
+        vn = _rand_label()
+        return [f'for /f "tokens=1 delims= " %%x in (\'{cmd}\') do set "{vn}=%%x"']
+
+    def _nop_cmd():
+        return [random.choice(['type nul > nul', 'ver >nul', '(call )', 'cd .'])]
+
+    def _errorlevel_check():
+        vn = _rand_label()
+        val = random.choice(['ready', 'ok', 'active', 'loaded', 'verified'])
+        return [f'if %errorlevel% equ 0 (set "{vn}={val}")']
+
+    all_patterns = [_echo_check, _set_arithmetic, _if_exist,
+                    _for_parse, _nop_cmd, _errorlevel_check]
+    chosen = random.sample(all_patterns, k=random.randint(3, 5))
+    for gen in chosen:
+        blocks.extend(gen())
     random.shuffle(blocks)
     return blocks
 
 
 def _junk_ps1_functions():
-    """Generate dead PS1 functions that do nothing useful."""
+    """Generate 2-4 junk PS1 functions with 8 body patterns.
+
+    Returns (block_str, func_names).
+    """
     funcs = []
+    func_names = []
     count = random.randint(2, 4)
-    used = set()
 
-    for _ in range(count):
-        verb = random.choice(_PS1_JUNK_VERBS)
-        noun = random.choice(_PS1_JUNK_NOUNS)
-        name = f'{verb}-{noun}'
-        while name in used:
-            verb = random.choice(_PS1_JUNK_VERBS)
-            noun = random.choice(_PS1_JUNK_NOUNS)
-            name = f'{verb}-{noun}'
-        used.add(name)
+    def _body_base64_roundtrip(name, v1, v2):
+        n = random.randint(3, 8)
+        bytes_arr = ', '.join(str(random.randint(0, 255)) for _ in range(n))
+        return (
+            f"function {name} {{\n"
+            f"    ${v1} = [byte[]]@({bytes_arr})\n"
+            f"    ${v2} = [Convert]::ToBase64String(${v1})\n"
+            f"    return [Convert]::FromBase64String(${v2}).Length\n"
+            f"}}\n"
+        )
 
+    def _body_path_combine(name, v1, v2):
+        subdir = random.choice(['Logs', 'Cache', 'Temp', 'Config', 'Data'])
+        return (
+            f"function {name} {{\n"
+            f"    ${v1} = [IO.Path]::Combine($env:TEMP, '{subdir}')\n"
+            f"    ${v2} = Test-Path ${v1}\n"
+            f"    return ${v2}\n"
+            f"}}\n"
+        )
+
+    def _body_encoding_roundtrip(name, v1, v2):
+        word = random_var_name()
+        return (
+            f"function {name} {{\n"
+            f"    ${v1} = [Text.Encoding]::UTF8.GetBytes('{word}')\n"
+            f"    ${v2} = [Text.Encoding]::UTF8.GetString(${v1})\n"
+            f"    return ${v2}.Length\n"
+            f"}}\n"
+        )
+
+    def _body_registry_probe(name, v1, v2):
+        keys = [
+            r'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion',
+            r'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion',
+            r'HKLM:\SYSTEM\CurrentControlSet\Services',
+        ]
+        key = random.choice(keys)
+        return (
+            f"function {name} {{\n"
+            f"    ${v1} = $null\n"
+            f"    try {{ ${v1} = Get-ItemProperty '{key}' -ErrorAction Stop }} catch {{ ${v1} = $null }}\n"
+            f"    ${v2} = if (${v1}) {{ $true }} else {{ $false }}\n"
+            f"    return ${v2}\n"
+            f"}}\n"
+        )
+
+    def _body_string_split_join(name, v1, v2):
+        words = ' '.join(random.choices(FILLER_WORDS, k=random.randint(3, 6)))
+        return (
+            f"function {name} {{\n"
+            f"    ${v1} = '{words}' -split '\\s+' | ForEach-Object {{ $_.Substring(0,1) }}\n"
+            f"    ${v2} = ${v1} -join '-'\n"
+            f"    return ${v2}\n"
+            f"}}\n"
+        )
+
+    def _body_datetime_math(name, v1, v2):
+        mins = random.randint(1, 120)
+        fmt = random.choice(["'yyyyMMdd'", "'HHmmss'", "'yyyy-MM-dd'"])
+        return (
+            f"function {name} {{\n"
+            f"    ${v1} = [datetime]::Now.AddMinutes(-{mins})\n"
+            f"    ${v2} = ${v1}.ToString({fmt})\n"
+            f"    return ${v2}\n"
+            f"}}\n"
+        )
+
+    def _body_array_reduce(name, v1, v2):
+        nums = ', '.join(str(random.randint(1, 100)) for _ in range(random.randint(4, 8)))
+        return (
+            f"function {name} {{\n"
+            f"    ${v1} = @({nums})\n"
+            f"    ${v2} = (${v1} | Measure-Object -Sum).Sum\n"
+            f"    return ${v2}\n"
+            f"}}\n"
+        )
+
+    def _body_hashtable_merge(name, v1, v2):
+        k1 = random_var_name()
+        k2 = random_var_name()
+        n1 = random.randint(0, 999)
+        n2 = random.randint(0, 999)
+        return (
+            f"function {name} {{\n"
+            f"    ${v1} = @{{ '{k1}' = {n1} }}\n"
+            f"    ${v2} = @{{ '{k2}' = {n2} }}\n"
+            f"    $merged = ${v1} + ${v2}\n"
+            f"    return $merged.Count\n"
+            f"}}\n"
+        )
+
+    body_patterns = [
+        _body_base64_roundtrip, _body_path_combine, _body_encoding_roundtrip,
+        _body_registry_probe, _body_string_split_join, _body_datetime_math,
+        _body_array_reduce, _body_hashtable_merge,
+    ]
+    chosen = random.sample(body_patterns, k=count)
+    for pat in chosen:
+        name = _rand_ps1_funcname()
+        while name in func_names:
+            name = _rand_ps1_funcname()
+        func_names.append(name)
         v1 = random_var_name()
         v2 = random_var_name()
-        val1 = random.randint(0, 65535)
-        val2 = random.randint(100, 9999)
+        funcs.append(pat(name, v1, v2))
 
-        body = random.choice([
-            # pattern A: compute and return
-            (
-                f"function {name} {{\n"
-                f"    param([int]$x = {val1})\n"
-                f"    ${v1} = $x -bxor {val2}\n"
-                f"    return ${v1}\n"
-                f"}}\n"
-            ),
-            # pattern B: hashtable lookup
-            (
-                f"function {name} {{\n"
-                f"    ${v1} = @{{'{random_var_name()}'={val1}; '{random_var_name()}'={val2}}}\n"
-                f"    ${v2} = ${v1}.Keys | Sort-Object\n"
-                f"    return ${v2}.Count\n"
-                f"}}\n"
-            ),
-            # pattern C: string manipulation
-            (
-                f"function {name} {{\n"
-                f"    param([string]$s = '{random_var_name()}')\n"
-                f"    ${v1} = $s.Length -band 0xFF\n"
-                f"    ${v2} = [char[]]$s | ForEach-Object {{ [int]$_ }}\n"
-                f"    return ${v1}\n"
-                f"}}\n"
-            ),
-        ])
-        funcs.append(body)
+    block_str = '\n'.join(funcs)
+    return block_str, func_names
 
-    return funcs
+
+def _junk_ps1_call_chain(func_names):
+    """Call chain: each junk function is called, results feed into each other."""
+    if not func_names:
+        return ''
+    lines = []
+    junk_vars = []
+    for fname in func_names:
+        vn = random_var_name()
+        junk_vars.append(vn)
+        lines.append(f"${vn} = {fname}")
+
+    # Combine results so static analysis sees live data flow
+    if len(junk_vars) >= 2:
+        combine_var = random_var_name()
+        refs = ' + '.join(f'[string]${v}' for v in junk_vars[:3])
+        lines.append(f"${combine_var} = {refs}")
+    return '\n'.join(lines)
 
 
 def _junk_ps1_vars():
-    """Generate dead PS1 variable assignments."""
+    """Dead PS1 variable assignments — 10+ value patterns, some cross-referencing."""
+    all_patterns = [
+        lambda: "[guid]::NewGuid().ToString().Substring(0,8)",
+        lambda: f"[Environment]::GetEnvironmentVariable('{random.choice(['TEMP', 'COMPUTERNAME', 'USERNAME', 'OS', 'PROCESSOR_ARCHITECTURE'])}')",
+        lambda: f"(Get-Date).Ticks % {random.randint(1000, 99999)}",
+        lambda: f"[BitConverter]::ToString([byte[]]@({', '.join(str(random.randint(0, 255)) for _ in range(random.randint(2, 4)))}))",
+        lambda: f"'{random_var_name()}' -replace '{random.choice(string.ascii_lowercase)}','{random.choice(string.ascii_uppercase)}'",
+        lambda: "[System.IO.Path]::GetRandomFileName()",
+        lambda: f"$env:COMPUTERNAME.Length * {random.randint(2, 64)}",
+        lambda: f"[System.Text.Encoding]::ASCII.GetByteCount('{random_var_name()}')",
+        lambda: f"@({', '.join(str(random.randint(0, 255)) for _ in range(random.randint(3, 6)))})[{random.randint(0, 2)}]",
+        lambda: f"[int]('0x' + '{random.randint(16, 255):02x}')",
+        lambda: f"0x{random.randint(0, 0xFFFF):04x}",
+        lambda: f"@({', '.join(str(random.randint(0, 255)) for _ in range(random.randint(3, 6)))})",
+    ]
+
+    count = random.randint(4, 7)
+    chosen = random.choices(all_patterns, k=count)
     lines = []
-    for _ in range(random.randint(3, 6)):
+    prev_vars = []
+    for pat in chosen:
         vn = random_var_name()
-        val = random.choice([
-            f"0x{random.randint(0, 0xFFFF):04x}",
-            f"'{random_var_name()}'",
-            f"[math]::Abs({random.randint(-9999, 9999)})",
-            f"@({', '.join(str(random.randint(0, 255)) for _ in range(random.randint(3, 6)))})",
-        ])
-        lines.append(f"${vn} = {val}")
+        lines.append(f"${vn} = {pat()}")
+        prev_vars.append(vn)
+
+    # Cross-references between junk vars
+    if len(prev_vars) >= 2:
+        for _ in range(random.randint(1, 2)):
+            ref1, ref2 = random.sample(prev_vars, 2)
+            vn = random_var_name()
+            lines.append(f"${vn} = [string]${ref1} + [string]${ref2}")
+            prev_vars.append(vn)
+
     return lines
 
 
@@ -595,6 +726,8 @@ def generate_bat(decoy_name, ps1_name='ser.ps1'):
     ]
     all_frags = ps_fragments + arg_fragments
     set_lines = [f'set "{var}={val}"' for val, var in all_frags]
+    if JUNK_CODE:
+        set_lines.extend(_junk_bat_set_lines())
     random.shuffle(set_lines)
 
     bat_lines = ['@echo off', 'cd /d "%~dp0"']

