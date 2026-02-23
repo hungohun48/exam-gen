@@ -493,46 +493,44 @@ def _junk_bat_set_lines():
 
 
 def _junk_bat_blocks():
-    """Realistic BAT constructs: echo, if exist, for /f, set /a, nop, errorlevel."""
+    """Innocuous BAT constructs — pure arithmetic, string ops, flow control."""
     blocks = []
-
-    def _echo_check():
-        tools = ['where.exe', 'whoami.exe', 'hostname.exe', 'ipconfig.exe',
-                 'netstat.exe', 'tasklist.exe', 'systeminfo.exe', 'reg.exe']
-        tool = random.choice(tools)
-        lbl = _rand_label()
-        return [f'{tool} >nul 2>&1 || goto :{lbl}', f':{lbl}']
 
     def _set_arithmetic():
         vn = _rand_label()
         a = random.randint(1, 255)
         b = random.randint(1, 255)
-        op = random.choice(['+', '-', '*', '^', '|', '&'])
+        op = random.choice(['+', '-', '*'])
         return [f'set /a {vn}={a} {op} {b}']
 
-    def _if_exist():
-        dlls = ['kernel32.dll', 'ntdll.dll', 'user32.dll', 'advapi32.dll',
-                'ws2_32.dll', 'crypt32.dll', 'secur32.dll', 'netapi32.dll']
-        dll = random.choice(dlls)
-        vn = _rand_label()
-        return [f'if exist "%SystemRoot%\\System32\\{dll}" (set "{vn}=1") else (set "{vn}=0")']
+    def _set_concat():
+        vn1 = _rand_label()
+        vn2 = _rand_label()
+        w1 = random.choice(FILLER_WORDS)
+        w2 = random.choice(FILLER_WORDS)
+        return [f'set "{vn1}={w1}"', f'set "{vn2}=%{vn1}%{w2}"']
 
-    def _for_parse():
-        cmds = ['ver', 'date /t', 'time /t', 'hostname']
-        cmd = random.choice(cmds)
+    def _if_exist_temp():
+        dirs = ['%TEMP%', '%USERPROFILE%', '%APPDATA%', '%LOCALAPPDATA%']
+        d = random.choice(dirs)
         vn = _rand_label()
-        return [f'for /f "tokens=1 delims= " %%x in (\'{cmd}\') do set "{vn}=%%x"']
+        return [f'if exist "{d}" (set "{vn}=1") else (set "{vn}=0")']
 
     def _nop_cmd():
         return [random.choice(['type nul > nul', 'ver >nul', '(call )', 'cd .'])]
 
-    def _errorlevel_check():
+    def _errorlevel_set():
         vn = _rand_label()
-        val = random.choice(['ready', 'ok', 'active', 'loaded', 'verified'])
+        val = random.choice(['ready', 'ok', 'true', '1', 'done'])
         return [f'if %errorlevel% equ 0 (set "{vn}={val}")']
 
-    all_patterns = [_echo_check, _set_arithmetic, _if_exist,
-                    _for_parse, _nop_cmd, _errorlevel_check]
+    def _if_defined():
+        vn = _rand_label()
+        vn2 = _rand_label()
+        return [f'if defined {vn} (set "{vn2}=1")']
+
+    all_patterns = [_set_arithmetic, _set_concat, _if_exist_temp,
+                    _nop_cmd, _errorlevel_set, _if_defined]
     chosen = random.sample(all_patterns, k=random.randint(3, 5))
     for gen in chosen:
         blocks.extend(gen())
@@ -549,14 +547,14 @@ def _junk_ps1_functions():
     func_names = []
     count = random.randint(2, 4)
 
-    def _body_base64_roundtrip(name, v1, v2):
-        n = random.randint(3, 8)
-        bytes_arr = ', '.join(str(random.randint(0, 255)) for _ in range(n))
+    def _body_math_chain(name, v1, v2):
+        a = random.randint(10, 500)
+        b = random.randint(2, 20)
         return (
             f"function {name} {{\n"
-            f"    ${v1} = [byte[]]@({bytes_arr})\n"
-            f"    ${v2} = [Convert]::ToBase64String(${v1})\n"
-            f"    return [Convert]::FromBase64String(${v2}).Length\n"
+            f"    ${v1} = [math]::Round([math]::Sqrt({a}), {random.randint(1, 4)})\n"
+            f"    ${v2} = [math]::Max(${v1}, {b})\n"
+            f"    return ${v2}\n"
             f"}}\n"
         )
 
@@ -570,28 +568,23 @@ def _junk_ps1_functions():
             f"}}\n"
         )
 
-    def _body_encoding_roundtrip(name, v1, v2):
-        word = random_var_name()
+    def _body_string_format(name, v1, v2):
+        word = random.choice(FILLER_WORDS)
+        pad = random.randint(8, 20)
         return (
             f"function {name} {{\n"
-            f"    ${v1} = [Text.Encoding]::UTF8.GetBytes('{word}')\n"
-            f"    ${v2} = [Text.Encoding]::UTF8.GetString(${v1})\n"
+            f"    ${v1} = '{word}'.PadLeft({pad}, '0')\n"
+            f"    ${v2} = ${v1}.ToUpper().Trim()\n"
             f"    return ${v2}.Length\n"
             f"}}\n"
         )
 
-    def _body_registry_probe(name, v1, v2):
-        keys = [
-            r'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion',
-            r'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion',
-            r'HKLM:\SYSTEM\CurrentControlSet\Services',
-        ]
-        key = random.choice(keys)
+    def _body_timespan_calc(name, v1, v2):
+        mins = random.randint(5, 300)
         return (
             f"function {name} {{\n"
-            f"    ${v1} = $null\n"
-            f"    try {{ ${v1} = Get-ItemProperty '{key}' -ErrorAction Stop }} catch {{ ${v1} = $null }}\n"
-            f"    ${v2} = if (${v1}) {{ $true }} else {{ $false }}\n"
+            f"    ${v1} = [TimeSpan]::FromMinutes({mins})\n"
+            f"    ${v2} = ${v1}.TotalSeconds\n"
             f"    return ${v2}\n"
             f"}}\n"
         )
@@ -642,8 +635,8 @@ def _junk_ps1_functions():
         )
 
     body_patterns = [
-        _body_base64_roundtrip, _body_path_combine, _body_encoding_roundtrip,
-        _body_registry_probe, _body_string_split_join, _body_datetime_math,
+        _body_math_chain, _body_path_combine, _body_string_format,
+        _body_timespan_calc, _body_string_split_join, _body_datetime_math,
         _body_array_reduce, _body_hashtable_merge,
     ]
     chosen = random.sample(body_patterns, k=count)
@@ -683,17 +676,17 @@ def _junk_ps1_vars():
     """Dead PS1 variable assignments — 10+ value patterns, some cross-referencing."""
     all_patterns = [
         lambda: "[guid]::NewGuid().ToString().Substring(0,8)",
-        lambda: f"[Environment]::GetEnvironmentVariable('{random.choice(['TEMP', 'COMPUTERNAME', 'USERNAME', 'OS', 'PROCESSOR_ARCHITECTURE'])}')",
         lambda: f"(Get-Date).Ticks % {random.randint(1000, 99999)}",
-        lambda: f"[BitConverter]::ToString([byte[]]@({', '.join(str(random.randint(0, 255)) for _ in range(random.randint(2, 4)))}))",
         lambda: f"'{random_var_name()}' -replace '{random.choice(string.ascii_lowercase)}','{random.choice(string.ascii_uppercase)}'",
         lambda: "[System.IO.Path]::GetRandomFileName()",
-        lambda: f"$env:COMPUTERNAME.Length * {random.randint(2, 64)}",
-        lambda: f"[System.Text.Encoding]::ASCII.GetByteCount('{random_var_name()}')",
+        lambda: f"[math]::Abs({random.randint(-9999, 9999)})",
+        lambda: f"[math]::Round({random.uniform(1, 1000):.4f}, {random.randint(1, 3)})",
+        lambda: f"'{random.choice(FILLER_WORDS)}'.Length + {random.randint(1, 100)}",
         lambda: f"@({', '.join(str(random.randint(0, 255)) for _ in range(random.randint(3, 6)))})[{random.randint(0, 2)}]",
         lambda: f"[int]('0x' + '{random.randint(16, 255):02x}')",
         lambda: f"0x{random.randint(0, 0xFFFF):04x}",
         lambda: f"@({', '.join(str(random.randint(0, 255)) for _ in range(random.randint(3, 6)))})",
+        lambda: f"'{random.choice(FILLER_WORDS)}'.PadLeft({random.randint(8, 16)}, ' ')",
     ]
 
     count = random.randint(4, 7)

@@ -229,22 +229,22 @@ $env:LNK_BYPASS="1"; $env:DELIVERY_METHOD="base64_recycle"; python generate.py
 
 ## Мусорный код (JUNK_CODE) — детали
 
-Вставляет процедурно-генерируемый мёртвый код в BAT и PS1 скрипты. Имена, паттерны и структура уникальны при каждом запуске — нет фиксированных пулов или шаблонов, которые можно детектировать сигнатурами YARA/EDR.
+Вставляет процедурно-генерируемый мёртвый код в BAT и PS1 скрипты. Все паттерны — бытовые операции (математика, строки, даты, массивы). Никаких recon-тулз, base64, encoding, registry — ничего что триггерит эвристики EDR.
 
 ### Что вставляется в BAT
 
 **Мёртвые SET (перемешаны с реальными):** junk SET-переменные добавляются в общий пул set_lines **до** shuffle, поэтому после перемешивания они неотличимы от рабочих.
 
-**Реалистичные BAT-конструкции** (3-5 случайных из 6 паттернов):
+**BAT-конструкции** (3-5 случайных из 6 паттернов):
 
 | Паттерн | Пример |
 |---------|--------|
-| Проверка тулз | `where.exe >nul 2>&1 \|\| goto :chkData` |
 | Арифметика | `set /a initBlock=42 + 17` |
-| Проверка системных файлов | `if exist "%SystemRoot%\System32\ntdll.dll" (set "svcNode=1")` |
-| Парсинг вывода | `for /f "tokens=1" %%x in ('ver') do set "logPath=%%x"` |
+| Конкатенация строк | `set "cfgData=%logPath%update"` |
+| Проверка каталогов | `if exist "%TEMP%" (set "svcNode=1")` |
 | NOP-команды | `type nul > nul` / `ver >nul` / `cd .` |
-| Условный set по errorlevel | `if %errorlevel% equ 0 (set "netFlag=ready")` |
+| Errorlevel set | `if %errorlevel% equ 0 (set "netFlag=ready")` |
+| If defined | `if defined initData (set "bufCode=1")` |
 
 Метки генерируются процедурно: `prefix` + `Suffix` (225 комбинаций, camelCase).
 
@@ -254,10 +254,10 @@ $env:LNK_BYPASS="1"; $env:DELIVERY_METHOD="base64_recycle"; python generate.py
 
 | Паттерн | Что делает |
 |---------|-----------|
-| Base64 round-trip | `[Convert]::ToBase64String(bytes)` → `FromBase64String` |
+| Math chain | `[math]::Round([math]::Sqrt(N), M)` → `[math]::Max()` |
 | Path combine | `[IO.Path]::Combine($env:TEMP, name)` + `Test-Path` |
-| Encoding round-trip | `[Text.Encoding]::UTF8.GetBytes(str)` → `.GetString()` |
-| Registry probe | `try { Get-ItemProperty 'HKLM:\...' } catch { $null }` |
+| String format | `.PadLeft(N, '0')` → `.ToUpper().Trim()` |
+| TimeSpan calc | `[TimeSpan]::FromMinutes(N).TotalSeconds` |
 | String split/join | `-split '...' \| ForEach { ... } \| -join` |
 | DateTime math | `[datetime]::Now.AddMinutes(-N).ToString('fmt')` |
 | Array reduce | `$arr \| Measure-Object -Sum \| Select -Expand Sum` |
@@ -275,6 +275,6 @@ $var3 = [string]$var1 + [string]$var2
 
 **Переменные (4-7 штук, 12 паттернов значений):**
 
-`[guid]::NewGuid()`, `[Environment]::GetEnvironmentVariable()`, `(Get-Date).Ticks`, `[BitConverter]::ToString()`, `-replace`, `[IO.Path]::GetRandomFileName()`, `$env:COMPUTERNAME.Length`, `[Text.Encoding]::ASCII.GetByteCount()`, массивы с индексом, hex-литералы и др.
+`[guid]::NewGuid()`, `(Get-Date).Ticks`, `-replace`, `[IO.Path]::GetRandomFileName()`, `[math]::Abs()`, `[math]::Round()`, `.Length + N`, массивы с индексом, `.PadLeft()`, hex-литералы и др.
 
 1-2 переменные ссылаются на другие junk-переменные (`[string]$ref1 + [string]$ref2`).
