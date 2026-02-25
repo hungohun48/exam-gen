@@ -1,5 +1,5 @@
 python-docx>=0.8.11
 pycdlib>=1.14.0
-pylnk3>=1.0.0
+pylnk3>=0.3.0,<1.0
 docx2pdf>=0.1.8
 boto3>=1.28.0

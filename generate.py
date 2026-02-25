@@ -32,7 +32,7 @@ import pycdlib
 # ── Try pylnk3, fall back to manual binary builder ──────────────────
 try:
     import pylnk3
-    HAS_PYLNK3 = True
+    HAS_PYLNK3 = hasattr(pylnk3, 'for_file')
 except ImportError:
     HAS_PYLNK3 = False
 
