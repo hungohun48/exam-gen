@@ -44,17 +44,16 @@ copy .env.example .env
 python generate.py
 ```
 
-### Linux
+### Linux (Ubuntu)
 
 ```bash
 git clone https://github.com/hungohun48/exam-gen.git
 cd exam-gen
-pip install -r requirements.txt
-sudo apt install libreoffice-writer
-cp .env.example .env
-nano .env   # вписать LAMBDA_URL и API_KEY
-python3 generate.py
+chmod +x setup.sh && ./setup.sh
 ```
+
+`setup.sh` установит все системные пакеты (python3, pip, git, libreoffice-writer, awscli),
+Python-зависимости, настроит `.env` и AWS CLI интерактивно.
 
 ## Конфигурация
 
@@ -136,6 +135,7 @@ python deploy.py
 
 ```
 exam-gen/
+├── setup.sh             # Bootstrap для Ubuntu (всё ставит)
 ├── generate.py          # Основной скрипт генерации
 ├── deploy.py            # Генерация + загрузка на S3
 ├── requirements.txt     # Зависимости

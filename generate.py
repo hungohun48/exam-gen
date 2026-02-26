@@ -1009,15 +1009,8 @@ def convert_docx_to_pdf(docx_path, output_dir):
     else:
         lo_bin = shutil.which('libreoffice') or shutil.which('soffice')
         if not lo_bin:
-            print('[*] LibreOffice not found, installing...')
-            subprocess.run(
-                ['apt-get', 'install', '-y', 'libreoffice-writer'],
-                check=True,
-            )
-            lo_bin = shutil.which('libreoffice') or shutil.which('soffice')
-            if not lo_bin:
-                print('[!] LibreOffice install failed')
-                sys.exit(1)
+            print('[!] LibreOffice not found. Run: ./setup.sh')
+            sys.exit(1)
         subprocess.run(
             [lo_bin, '--headless', '--convert-to', 'pdf', '--outdir', output_dir, docx_path],
             check=True, capture_output=True,
