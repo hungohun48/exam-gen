@@ -911,7 +911,17 @@ def create_lnk(out_path, target, arguments, icon_location, icon_index, working_d
         if working_dir:
             kwargs['work_dir'] = working_dir
         lnk = pylnk3.for_file(**kwargs)
-        # Patch ShowCommand in the written file (pylnk3 doesn't expose it directly)
+        # On Linux, pylnk3 marks all path segments as TYPE_FILE because
+        # os.path.isdir('C:\Windows\...') returns False.  Fix intermediate
+        # segments to TYPE_FOLDER so Windows can resolve the PIDL.
+        if sys.platform != 'win32' and lnk.shell_item_id_list:
+            items = lnk.shell_item_id_list.items
+            for item in items[2:-1]:          # skip Root + Drive; keep last as FILE
+                if hasattr(item, 'type'):
+                    item.type = pylnk3.TYPE_FOLDER
+            lnk.save()
+        # Patch ShowCommand in the written file (pylnk3 WINDOW_* constants
+        # may not map to the exact SW_ values we need, e.g. SW_SHOWMINNOACTIVE=7)
         if window_style != 1 and os.path.exists(out_path):
             with open(out_path, 'r+b') as f:
                 f.seek(60)
